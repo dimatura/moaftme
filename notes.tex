@@ -27,7 +27,7 @@ columns=fullflexible}
 
 A parametric model for survival time data.
 
-Survival Function for AFT
+Survival Function for AFT:
 \begin{align*}
     S(t|x) = \psi \left(  \frac{ \log t - x'\beta}{\sigma}\right)
 \end{align*}
@@ -83,24 +83,22 @@ Also
 \begin{align*}
     F(t|x, \theta) = \sum_{j}^J p_j(x, \rho_{1:J}) F_j(t|x, \beta_j, \sigma^2_j)
 \end{align*}
+\section{Likelihood}
+We asume that failture times are  independently distributed and independent from the censoring process. For each individual we observe the failure time, a right censored or interval censored failure time as usually define.
 
-\section{Inference}
+The likelihood is then (Cox and Oakes, 1984)
+\begin{align}
+\nonumber    L(\mathbf \theta | \mathbf{t} , \mathbf{X}) = \prod_{i\in \mathcal{U}}{} f(t_i| x_i, \mathbf{\theta})\prod_{i\in \mathcal{C} }\{1-F(t_i^+|x_i, \mathbf{\theta} \}\\
+    \times \prod_{i\in \mathcal{I} }\{F(t_{iU}|x_i, \mathbf{\theta})-F(t_{iL}|x_i, \mathbf{\theta}) \}
+\end{align}
 
+\section{Inference in the Mixtures of AFT Model Experts}
 We use MCMC with a data augmentation approach, where ``true'' survival times $
 \mathbf{w}$ and component membership $\mathbf{Z}$ (where $Z_{ij}=1$ indicates
 observation $i$ comes from component $j$) are considered latent variables.
 %If $w$ and $\mathbf{Z}$ are known, likelihood calculation is simple.
 
-Algorithm: 
-\begin{enumerate}
-    \item Choose $\mathbf{w^0}$, $\mathbf{Z}^0$, $\theta^0 = \left\{ \sigma^{2(0)}_{1:J}, \beta_{1:J}^0, \rho_{1:J}^0 \right\}$ 
-    \item Sample $f( \mathbf{w} | \theta, \mathbf{Z} )$ 
-    \item Sample $f( \mathbf{Z} | \theta, \mathbf{w} )$
-    \item Sample $f( \theta | \mathbf{Z}, \mathbf{w})$
-    \item Repeat 2-4 until convergence
-\end{enumerate}
-
-For step 1, $n$ pseudo-observations $w_i$, $i=1,\dots, n$,  are sampled. If $t_i$ is not censored, $w_i = t_i$. If $t_i$ is interval censored, $w_i$ is sampled by solving
+Pseudo-observations $w_i$, $i=1,\dots, n$,  are sampled. If $t_i$ is not censored, $w_i = t_i$. If $t_i$ is interval censored, $w_i$ is sampled by solving
 \begin{align*}
     w_i = F^{-1}\left( F(t_{iL} | x_i, \theta ) + u\left( F(t_{iU}|x_i, \theta) - F(t_{iL}|x_i, \theta) \right)  \right)
 \end{align*}
@@ -111,12 +109,55 @@ If $t_i$ is right censored, $w_i$ is sampled by solving
 \end{align*}
 where $t_{i}^+$ is the lower bound for the occurrence of $t_i$, and $u$ is a uniform(0,1) random sample.
 
-For step 2, $z_i$, $i=1\dots n$ are sampled, where $z_i$ is a sample from a multinomial distribution with parameters $(1, h_{i1}, \dots, h_{iJ})$, with
+$z_i$, $i=1\dots n$ are sampled, where $z_i$ is a sample from a multinomial distribution with parameters $(1, h_{i1}, \dots, h_{iJ})$, i.e.,
+\begin{align*}
+    z_{i} \sim Multinomial (1, h_{i1}, \dots, h_{iJ})
+\end{align*}
+with
 \begin{align*}
     h_{ij} = \frac{ p_j(x_i, \rho_{1:J}) f_j(w_i | x_i, \beta_j) } { \sum_l^J p_l(x_i, \rho_{1:J}) f_l(w_i | x_i, \beta_l) }
 \end{align*}
+then the augmented likelihood for the completely imputed data $\mathbf w$ and $\mathbf z$ is
+\begin{align*}
+    L(\theta | \mathbf z, \mathbf w, \mathbf t ,\mathbf X) = \prod_{i=1}^n \prod_{j=1}^J (p_j(\mathbf x_i,\rho ) f_j(w_i| x_i,\beta_j , \sigma^2_j))^{z_{ij}}
+\end{align*}
+We consider as prior distributions $(\beta_j | \sigma^2_j) \sim \mathcal{N} (b_{0j},\sigma^2_j B_{0j})$, and $\sigma^2_j \sim \mathcal{IG}(n_{0j}/2,n_{0j}S_{0j}/2)$ independent for all $j=1,\ldots , J$. And independently for $\rho \sim \mathcal{N}(\mathbf{0},1000 \times I)$. Then, the posterior distribution for the parameters is given by
+\begin{eqnarray*}
+    \pi(\theta | \mathbf z, \mathbf w, \mathbf t ,\mathbf X) &=& \prod_{i=1}^n \prod_{j=1}^J (p_j(\mathbf x_i,\rho ) f_j(w_i| x_i,\beta_j , \sigma^2_j))^{z_{ij}} \{\prod_{j=1}^J \phi (\beta_j | \mathbf b_{0j},\sigma^2_j \mathbf B_{0j}) \times \mathcal{IG} (\sigma^2_j| n_{0j}/2,n_{0j}S_{0j}/2 )\} \\
+    & & ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\times \phi (\rho | \mathbf 0,1000\times I)
+\end{eqnarray*}
 
-Step 3 is more complex.
+Algorithm:
+\begin{enumerate}
+    \item Choose $\mathbf{w^0}$, $\mathbf{Z}^0$, $\theta^0 = \left\{ \sigma^{2(0)}_{1:J}, \beta_{1:J}^0, \rho_{1:J}^0 \right\}$
+    \item Sample $f( \mathbf{w} | \theta, \mathbf{Z} )$
+    \item Sample $f( \mathbf{Z} | \theta, \mathbf{w} )$
+    \item Sample $f( \theta | \mathbf{Z}, \mathbf{w})$
+    \item Repeat 2-4 until convergence
+\end{enumerate}
 
+For step 2, $n$ 
 
+Step 4, at this step we decide to blocking parameter $\mathbf \theta$ into $\mathbf \beta$, $\mathbf \sigma$ and $\mathbf \delta$, as follows
+
+Note that, $\mathbf z = (z_1,\ldots , z_n)$ defines the group (or cluster, or component) from which the observation becomes.
+% Note que z define de que grupo la observación proviene
+
+Thus on each group (or cluster), the regression parameters $\mathbf \beta_j$, $j=1,\ldots,J$, are defined by the sample $(\mathbf Y_j ,\mathbf X_j)$, i.e. the observations that becomes from the $j$ group (or cluster), then the full conditional distribution for $\mathbf \beta_j$ is given by
+\begin{eqnarray*}
+    \mathbf{ \beta}_j | \ldots  &\sim &\mathcal{N}( \mathbf b_{1j}, \sigma^2_j \mathbf B_{1j})\\
+    \mathbf \sigma^2_j | \ldots & \sim &\mathcal{IG}( n_1 / 2 , n_1S_1/2)
+\end{eqnarray*}
+where $\mathcal{IG}$ denotes the inverse gamma distribution.
+\begin{eqnarray*}
+\mathbf b_{1j} &=& \mathbf B_{1j} ( \mathbf B^{-1}_{0j}b_{0j} + \mathbf X_{j}' \mathbf Y_{j} )\\
+\mathbf B_{1j}^{-1} &=& \mathbf B_{0j}^{-1} + \mathbf X_{j}'  \mathbf X_{j}\\
+n_1 &=& n_{0j} + n_j\\
+n_1 S_1 &=& n_{0j} S_{0j} + (n_j - p ) S_j^2 + (\hat{\beta}_j - \mathbf b_{0j})' (\mathbf B_{0j} + (\mathbf X_{j}'  \mathbf X_{j})^{-1})^{-1} (\hat{\beta}_j - \mathbf b_{0j})
+\end{eqnarray*}
+and $\hat{\beta}_j = (\mathbf X_{j}' \mathbf X_{j})^{-1} \mathbf X_{j}' \mathbf Y_{j} $, $S_j^2 = \mathbf Y'_j(\mathbf I_n - \mathbf X_j (\mathbf X'_j \mathbf X_j)^{-1} \mathbf X'_j)/(n_j - p)$.
+
+Note that, if $n_0\rightarrow 0$ and $B_0^{-1} \rightarrow 0$ then the priori is non-informative.
+
+For the $\mathbf \delta$ parameters the use of random walk metropolis is needed, due to the non-tractability of the full conditional posterior for this block of parameters.
 \end{document}
