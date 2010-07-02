@@ -19,7 +19,6 @@ repmat <- function(a,n,m) { kronecker(matrix(1, n, m), a) }
 
 # F(t_i | x_i, theta)
 dF.i <- function(t.i, x.i, .beta, .rho, .sigma) {
-    #browser()
     .p <- exp(x.i %*% t(.rho)) 
     .p <- .p / rowSums(.p)
     #sum(.p*pnorm((log(t.i)-x.i%*%.beta)/.sigma))
@@ -28,7 +27,6 @@ dF.i <- function(t.i, x.i, .beta, .rho, .sigma) {
 
 # F(t_i | x_i, theta)
 df.i <- function(t.i, x.i, .beta, .rho, .sigma) {
-    #browser()
     .p <- exp(x.i %*% t(.rho)) 
     .p <- .p / rowSums(.p)
     #sum(.p*pnorm((log(t.i)-x.i%*%.beta)/.sigma))
@@ -39,7 +37,6 @@ df.i <- function(t.i, x.i, .beta, .rho, .sigma) {
 sample.w <- function(t.l, t.u, right.censored, int.censored, Z, X,
         .beta, .sigma) {
     # convert from 0,1 to T,F
-    #browser()
     Z <- Z > 0.5
     .w <- matrix(nrow=1,ncol=nrow(X))
     for (i in 1:nrow(t.l)) {
@@ -61,15 +58,16 @@ sample.w <- function(t.l, t.u, right.censored, int.censored, Z, X,
 # return nxJ matrix Z where Z[i,j]=1 indicates obs. i comes from component j
 sample.z <- function(w, X, .beta, .rho, .sigma) {
     # .p: nxj matrix where .p(i,j) = p(x.i, rho.j)
-    xtr <- X %*% t(.rho)
+    xtr <- tcrossprod(X, .rho)
+    #browser()
     # logs to (try to) avoid overflow
-    .p <- exp(xtr - repmat(log(rowSums(exp(xtr))), 1, length(.rho)))
+    .p <- exp(xtr - repmat(log(rowSums(exp(xtr))), 1, ncol(X)))
     # .f: nxj matrix where .f(i,j) = .f_j(x.i, .beta.j) 
     .f <- dlnorm(repmat(w, 1, ncol(.p)),meanlog=X %*% t(.beta),sdlog=repmat(matrix(.sigma,nrow=1), nrow(X), 1))
     # h: nxj matrix where
     # h[i,j] = p_j(x_i,rho_j)*f_j(w_i|x_i,beta_j)/(sum_{j=1}^J(p_j(x_i,rho_j)*f_j(w_i|x_i,beta_j)))
-    h <- (.p * .f) / repmat(rowSums(.p * .f), 1, length(.rho))
-    Z <- matrix(nrow=nrow(X), ncol=length(.rho))
+    h <- (.p * .f) / repmat(rowSums(.p * .f), 1, ncol(X))
+    Z <- matrix(nrow=nrow(X), ncol=nrow(.beta))
     for (i in 1:nrow(X)) {
         Z[i,] <- rmultinom(1, 1, h[i,])
     }
@@ -79,7 +77,7 @@ sample.z <- function(w, X, .beta, .rho, .sigma) {
 # Y: log(w)
 # z: column of memberships for jth component
 sample.beta.j <- function(Y,X,z,sig2j,n0,S0,b0,B0) {
-    X.s<- matrix(X[z==1,],ncol=X)
+    X.s<- matrix(X[z==1,],nrow=length(z[z==1]) ,ncol=ncol(X))
     Y.s<- Y[z==1]
     .n <-nrow(X.s)
     p <- ncol(X.s)
@@ -105,8 +103,9 @@ sample.rho <- function(X, Z, .rho, tune) {
     # log posteriors of rows of a rho matrix
     # as a vector of length J
     log.post <- function(r) {
+        #browser()
         # TODO flatness for log.pri
-        log.pri <- dmvnorm(r, 100*diag(ncol(X)),log=TRUE)
+        log.pri <- dmvnorm(r, rep(0, ncol(X)), 100*diag(ncol(X)),log=TRUE)
         exr <- exp(tcrossprod(X, r))
         exr <- exr/repmat(rowSums(exr), 1, ncol(exr))
         log.lik <- colSums(log(exr))
@@ -149,18 +148,21 @@ sampler <- function(t.l, t.u, right.censored, int.censored, X, J, M,
     beta.samples[1,,] <- matrix(rnorm(p*J, mean=0, sd=10), ncol=p)
     rho.samples[1,,] <- matrix(rnorm(p*J, mean=0, sd=10), ncol=p)
     # set first col to zero for identifiability
-    rho.samples[1,1,] <- 0
+    rho.samples[1,1,] <- matrix(0, nrow=p, ncol=1)
     sigma.samples[1,] <- matrix(1/rgamma(J, n0/2, n0*S0/2), nrow=1)
 
+    #browser()
     # main loop
     for (m in 2:M) {
 
+        #browser()
         w.samples[m,] <- sample.w(t.l, t.u, right.censored, int.censored,
                 Z.samples[m-1,,],
                 X,
                 beta.samples[m-1,,],
                 sigma.samples[m-1,])
 
+        print(m)
         Z.samples[m,,] <- sample.z(w.samples[m,], X,
                 beta.samples[m-1,,], 
                 rho.samples[m-1,,],
@@ -172,9 +174,10 @@ sampler <- function(t.l, t.u, right.censored, int.censored, X, J, M,
             sigma.samples[m,j] <- sqrt(out$sig2j)
             beta.samples[m,j,] <- t(out$beta.j)
         }
-        rho.samples[m,,] <- sample.rho(X, Z.samples[m,,], .rho[m-1,,], tune)
+        out <- sample.rho(X, Z.samples[m,,], rho.samples[m-1,,], tune)
+        rho.samples[m,,] <- out$rho
     }
-    list(w.samples=w,Z.samples=Z.samples,sigma.samples=sigma.samples,
+    list(w.samples=w.samples,Z.samples=Z.samples,sigma.samples=sigma.samples,
             beta.samples=beta.samples,rho.samples=rho.samples)
 }
 
@@ -278,11 +281,12 @@ test.sampler.1 <- function() {
     J <- 2
 
     sim <- sim.data()
+    X <- cbind(rep(1,nrow(sim$X)), sim$X)
 
     rc <- sim$right.censored
     ic <- sim$int.censored
 
-    out <- sampler(sim$t.l, sim$t.u, rc, ic, d$X, J, M, 
+    out <- sampler(sim$t.l, sim$t.u, rc, ic, X, J, M, 
         n0=1, S0=2, b0=matrix(0,2,1), B0=100*diag(2), tune)
     print(out)
 }
@@ -300,6 +304,9 @@ test.sample.rho <- function() {
         #print(out$accept)
         #print(.rho)
     }
+}
+
+EM <- function(t.l, t.u, right.censored, int.censored, X, J, M) {
 }
 
 #test.sample.beta.j()
