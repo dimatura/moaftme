@@ -1,0 +1,122 @@
+\documentclass[11pt,letterpaper]{article}
+\usepackage[pdftex]{graphicx}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{fullpage}
+\usepackage[utf8]{inputenc}  % char encoding
+\pagestyle{plain}   % do page numbering ('empty' turns off)
+\usepackage{listings}
+\lstloadlanguages{R}
+\lstset{language=R,
+basicstyle=\footnotesize,
+tabsize=2,
+columns=fullflexible}
+\usepackage[colorlinks=true,linkcolor=blue,urlcolor=blue]{hyperref}
+
+\DeclareMathOperator*{\argmax}{arg\,max}
+\DeclareMathOperator*{\argmin}{arg\,min}
+\DeclareMathOperator*{\logit}{logit}
+
+\title{Survival Time Analysis with Mixtures of Accelerated Failure Time (AFT) Model Experts}
+\author{Daniel Maturana and Abel Valdebenito}
+
+\begin{document}
+\maketitle
+
+\section{Accelerated Failure Time Models}
+
+A parametric model for survival time data.
+
+Survival Function for AFT
+\begin{align*}
+    S(t|x) = \psi \left(  \frac{ \log t - x'\beta}{\sigma}\right)
+\end{align*}
+
+For log-normal AFT, 
+\begin{align*}
+    \psi(\cdot) = 1 - \Phi(\cdot)
+\end{align*}
+So
+\begin{align*}
+    F(t) &= 1 - S(t) \\
+         &= \Phi\left( \frac{\log t - x'\beta}{\sigma} \right) \\
+    f(t) &= F'(t) \\
+         &= \phi\left( \frac{\log t - x'\beta}{\sigma} \right) \frac{1}{ \sigma t } \\
+         &= \frac{1}{\sqrt{2 \pi}} \exp\left( \frac{ -(\log t - x'\beta)^2 }{ 2\sigma^2} \right) \frac{1}{\sigma t} \\
+         &= \frac{1}{\sqrt{2 \pi \sigma^2}} \exp\left( \frac{ -(\log t - x'\beta)^2 }{ 2\sigma^2} \right) \frac{1}{t} \\
+         &= \mathcal{N}( \log t | x'\beta, \sigma^2 ) \frac{1}{t} \\
+         &= \mathcal{LN}( t | x'\beta, \sigma^2 )
+\end{align*}
+where $\mathcal{N}(\cdot|\mu, \sigma^2)$ is the normal density of mean $\mu$ and $\sigma^2$, and
+$\mathcal{LN}(\cdot|\mu, \sigma^2)$ is the corresponding log-normal density.
+
+Also 
+\begin{align*}
+    \log T  &= x'\beta + \sigma \varepsilon \\
+    \varepsilon &\sim \mathcal{N}(0, 1) \\
+\end{align*}
+Or
+\begin{align*}
+     T  &= \exp(x'\beta) v \\
+     v  &= \exp(\sigma \varepsilon) \\
+     \varepsilon &\sim \mathcal{N}(0, 1) 
+\end{align*}
+
+If data is censored, likelihood may be calculated by integrating $f$ over ranges where the true $t$ may lie.
+
+TODO: write full log likelihood expression for censored data
+
+\section{Mixtures of Experts of AFTs}
+
+Idea: Mixture of log-normal AFTs where weight of each mixture components depends on
+the covariates $x$; each AFT component becomes an ``expert'' for certain region of the input space.
+
+Let $\theta = \left\{ \beta_{1:J}, \rho_{1:J}, \sigma^2_{1:J} \right\}$.
+\begin{align*}
+    f(t|x, \theta) = \sum_{j}^J p_j(x, \rho_{1:J}) f_j(t|x, \beta_j, \sigma^2_j)
+\end{align*}
+Where $f_j$ are log-normal AFT. We use a logistic link
+\begin{align*}
+    p_j(x, \rho_{1:J}) &= \frac{\exp(x'\rho_j)}{\sum_l^J \exp(x'\rho_l)}
+\end{align*}
+Also
+\begin{align*}
+    F(t|x, \theta) = \sum_{j}^J p_j(x, \rho_{1:J}) F_j(t|x, \beta_j, \sigma^2_j)
+\end{align*}
+
+\section{Inference}
+
+We use MCMC with a data augmentation approach, where ``true'' survival times $
+\mathbf{w}$ and component membership $\mathbf{Z}$ (where $Z_{ij}=1$ indicates
+observation $i$ comes from component $j$) are considered latent variables.
+%If $w$ and $\mathbf{Z}$ are known, likelihood calculation is simple.
+
+Algorithm: 
+\begin{enumerate}
+    \item Choose $\mathbf{w^0}$, $\mathbf{Z}^0$, $\theta^0 = \left\{ \sigma^{2(0)}_{1:J}, \beta_{1:J}^0, \rho_{1:J}^0 \right\}$ 
+    \item Sample $f( \mathbf{w} | \theta, \mathbf{Z} )$ 
+    \item Sample $f( \mathbf{Z} | \theta, \mathbf{w} )$
+    \item Sample $f( \theta | \mathbf{Z}, \mathbf{w})$
+    \item Repeat 2-4 until convergence
+\end{enumerate}
+
+For step 1, $n$ pseudo-observations $w_i$, $i=1,\dots, n$,  are sampled. If $t_i$ is not censored, $w_i = t_i$. If $t_i$ is interval censored, $w_i$ is sampled by solving
+\begin{align*}
+    w_i = F^{-1}\left( F(t_{iL} | x_i, \theta ) + u\left( F(t_{iU}|x_i, \theta) - F(t_{iL}|x_i, \theta) \right)  \right)
+\end{align*}
+where $t_{iU}$ and $t_{iL}$ are the upper and lower bounds for the time of occurrence of the event, and $u$ is a uniform(0,1) random sample.
+If $t_i$ is right censored, $w_i$ is sampled by solving
+\begin{align*}
+    w_i = F^{-1}\left( F(t_i^+ | x_i, \theta ) + u\left( 1 - F(t_i^+|x_i, \theta)\right)  \right)
+\end{align*}
+where $t_{i}^+$ is the lower bound for the occurrence of $t_i$, and $u$ is a uniform(0,1) random sample.
+
+For step 2, $z_i$, $i=1\dots n$ are sampled, where $z_i$ is a sample from a multinomial distribution with parameters $(1, h_{i1}, \dots, h_{iJ})$, with
+\begin{align*}
+    h_{ij} = \frac{ p_j(x_i, \rho_{1:J}) f_j(w_i | x_i, \beta_j) } { \sum_l^J p_l(x_i, \rho_{1:J}) f_l(w_i | x_i, \beta_l) }
+\end{align*}
+
+Step 3 is more complex.
+
+
+\end{document}
