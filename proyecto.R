@@ -14,18 +14,6 @@ library(MASS)
 # sigma - sigma of AFT models, J x 1 
 # rho - coefficients of logistic link, J x p
 
-# Traditionally calculated log likelihood
-#log.lik <- function(t., t.l, t.u, t.p, right.censored, interv.censored,
-#        X, phi, sigma, rho) {
-#    # p.j: nxj matrix where p.j(i,j) = p_j(x.i, rho.j) in mixture model 
-#    # where p_j is logit-stylr softmax 
-#    # note each column of X %*% t(.rho) is X %*% rho.j
-#    p.j <- exp(X %*% t(.rho)) 
-#    p.j <- p.j / rowSums(p.j)
-#    # uncensored data
-#    ll <- 0
-#}
-
 # matlab-like
 repmat <- function(a,n,m) { kronecker(matrix(1, n, m), a) }
 
@@ -73,8 +61,6 @@ sample.w <- function(t.l, t.u, right.censored, int.censored, Z, X,
 sample.z <- function(w, X, .beta, .rho, .sigma) {
     # .p: nxj matrix where .p(i,j) = p(x.i, rho.j)
     xtr <- X %*% t(.rho)
-    #.p <- exp(X %*% t(.rho)) 
-    #.p <- .p / repmat(rowSums(.p), 1, length(.rho))
     # logs to (try to) avoid overflow
     .p <- exp(xtr - repmat(log(rowSums(exp(xtr))), 1, length(.rho)))
     # .f: nxj matrix where .f(i,j) = .f_j(x.i, .beta.j) 
@@ -110,16 +96,40 @@ sample.beta.j <- function(Y,X,z,sig2j,n0,S0,b0,B0) {
 }
 
 # .rho: rho matrix Jxp
-# .gamma: variance of proposal distrib
-#  z: column of memberships for jth component
-sample.rho.j <- function(X, z, .rho, .gamma) {
-    X.j<- X[z==1,]
-    xtr <- tcrossprod(X.j, .rho)
+# tune: variance of proposal distrib
+#  Z: nxJ membership matrix
+# returns 1
+sample.rho <- function(X, Z, .rho, tune) {
+    # log posteriors of rows of a rho matrix
+    # as a vector of length J
+    log.post <- function(r) {
+        log.pri <- dmvnorm(rho,log=TRUE)
+        exr <- exp(tcrossprod(X, rho))
+        exr <- exr/repmat(rowSums(exr), 1, ncol(exr))
+        log.lik <- colSums(log(exr))
+        log.post <- log.lik + log.pri
+    }
+
+    cand.rho <- matrix(NA, nrow=nrow(.rho), ncol=ncol(.rho))
+    for (j in 1:nrow(.rho)) {
+        candidate[j,] <- rmvnorm(1, .rho[j,], tune*diag(ncol(.rho)))
+    }
+
+    # vector of ratios J
+    ratio <- exp(log.post(cand.rho) - log.post(.rho)) 
+
+    accept <- rep(0, nrow(.rho))
+    for (j in nrow(.rho)) {
+        if (runif(1) < ratio[j]) {
+            accept[j] <- 1
+            out.rho[j,] <- cand.rho[j,] 
+        } 
+    }
+    list(rho=rho,accept=accept)
 }
 
-
 sampler <- function(t.l, t.u, right.censored, int.censored, X, J, M, 
-        n0, S0, b0, B0) {
+        n0, S0, b0, B0, tune) {
     n <- nrow(X)
     p <- ncol(X)
 
@@ -151,17 +161,17 @@ sampler <- function(t.l, t.u, right.censored, int.censored, X, J, M,
                 beta.samples[m-1,,], 
                 rho.samples[m-1,,],
                 sigma.samples[m-1,])
-        # sample.beta uses log of times
+        # sample.beta uses log of time
         Y <- log(w.samples[m,])
         for (j in 1:J) {
             out <- sample.beta.j(Y, X, Z.samples[m,,j], sigma.samples[m-1,j]^2, n0, S0, b0, B0)  
             sigma.samples[m,j] <- sqrt(out$sig2j)
             beta.samples[m,j,] <- t(out$beta.j)
         }
-        # rho
-
+        rho.samples[m,,] <- sample.rho(X, Z.samples[m,,], .rho[m-1,,], tune)
     }
-    print(Z.samples[1,,])
+    list(w.samples=w,Z.samples=Z.samples,sigma.samples=sigma.samples,
+            beta.samples=beta.samples,rho.samples=rho.samples)
 }
 
 sim.data <- function(plot=FALSE) {
@@ -196,7 +206,6 @@ sim.data <- function(plot=FALSE) {
     #M <- 10
     #sampler(t., t.l, t.u, t.p, right.censored, int.censored, X, J, M)
 }
-
 
 test.sample.z <- function() {
     d <- sim.data() 
@@ -246,7 +255,26 @@ test.sample.w <- function() {
     #dev.print(device=pdf,"samplew.pdf")
 }
 
-test.sample.w()
+test.sampler.1 <- function() {
+    n0 <- 1
+    S0 <- diag(100)
+    b0 <- NA
+    B0 <- NA
+    tune <- 1
+    M <- 10
+    J <- 2
+
+    sim <- sim.data()
+
+    rc <- sim$right.censored
+    ic <- sim$int.censored
+
+    sampler(sim$t.l, sim$t.u, rc, ic, X, J, M, 
+        n0, S0, b0, B0, tune)
+}
+
+#test.sample.w()
 #test.sample.z()
 #sim.data(TRUE)
 
+test.
