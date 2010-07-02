@@ -39,10 +39,16 @@ moaftme.sampler <- function(t.l, t.u, right.censored, int.censored, X, J, M,
     for (m in 2:M) {
         print(m)
 
-        w.samples[m,] <- sample.w(t.l, t.u, right.censored, int.censored,
-                Z.samples[m-1,,],
+        #w.samples[m,] <- sample.w(t.l, t.u, right.censored, int.censored,
+        #        Z.samples[m-1,,],
+        #        X,
+        #        beta.samples[m-1,,],
+        #        sigma.samples[m-1,])
+
+        w.samples[m,] <- sample.w.2(t.l, t.u, right.censored, int.censored,
                 X,
                 beta.samples[m-1,,],
+                rho.samples[m-1,,],
                 sigma.samples[m-1,])
 
         Z.samples[m,,] <- sample.z(w.samples[m,], X,
@@ -77,6 +83,36 @@ sample.w <- function(t.l, t.u, right.censored, int.censored, Z, X,
         } else if (right.censored[i]==1) {
             Fl <- plnorm(t.l[i], crossprod(X[i,], .beta[Z[i,],]), .sigma[Z[i,]])
             .w[i] <- qlnorm(runif(1, Fl, 1 ), crossprod(X[i,],.beta[Z[i,],]), .sigma[Z[i,]])
+        } else {
+            .w[i] <- t.l[i]
+        }
+    }
+    .w
+}
+
+sample.w.2 <- function(t.l, t.u, right.censored, int.censored, X,
+        .beta, .rho, .sigma) {
+    # convert from 0,1 to T,F
+    .w <- matrix(nrow=1,ncol=nrow(X))
+    for (i in 1:nrow(t.l)) {
+        if (int.censored[i]==1) {
+            Fl <- dF.i(t.l[i], X[i,], .beta, .rho, .sigma)
+            Fu <- dF.i(t.u[i], X[i,], .beta, .rho, .sigma)
+            Fw <- runif(1, Fl, Fu) 
+            f.tmp <- function(w) {
+                Fw-dF.i(w, X[i,], .beta, .rho, .sigma)
+            }
+            t. <- seq(0, 1, 0.01) 
+            ft. <- apply(as.matrix(t.), 1,f.tmp)
+            browser()
+            .w[i,] <- uniroot(f.tmp, lower=t.l[i], upper=t.u[i])
+        } else if (right.censored[i]==1) {
+            Fl <- dF.i(t.l[i], X[i,], .beta, .rho, .sigma)
+            Fw <- function(w) {
+                runif(1, Fl, 1)-dF.i(w, X[i,], .beta, .rho, .sigma)
+            }
+            print(sprintf("%f %f %f %f" , t.l[i], 1, Fw(t.l[i]), Fw(1)))
+            .w[i] <- uniroot(Fw, lower=t.l[i], upper=999)
         } else {
             .w[i] <- t.l[i]
         }
@@ -177,18 +213,15 @@ repmat <- function(a,n,m) { kronecker(matrix(1, n, m), a) }
 
 # F(t_i | x_i, theta)
 dF.i <- function(t.i, x.i, .beta, .rho, .sigma) {
-    .p <- exp(x.i %*% t(.rho)) 
-    .p <- .p / rowSums(.p)
-    #sum(.p*pnorm((log(t.i)-x.i%*%.beta)/.sigma))
-    sum(.p*plnorm(t.i, meanlog=x.i%*%t(.beta), sdlog=.sigma))
+    .p <- exp(tcrossprod(x.i, .rho))
+    .p <- .p/repmat(rowSums(.p), 1, ncol(.p))
+    sum(.p*plnorm(t.i, meanlog=tcrossprod(x.i,.beta), sdlog=.sigma))
 }
 
-# F(t_i | x_i, theta)
 df.i <- function(t.i, x.i, .beta, .rho, .sigma) {
-    .p <- exp(x.i %*% t(.rho)) 
-    .p <- .p / rowSums(.p)
-    #sum(.p*pnorm((log(t.i)-x.i%*%.beta)/.sigma))
-    sum(.p*dlnorm(t.i, meanlog=x.i%*%t(.beta), sdlog=.sigma))
+    .p <- exp(tcrossprod(x.i, .rho))
+    .p <- .p/repmat(rowSums(.p), 1, ncol(.p))
+    sum(.p*dlnorm(t.i, meanlog=tcrossprod(x.i,.beta), sdlog=.sigma))
 }
 
 sim.data <- function(plot=FALSE) {
@@ -352,7 +385,7 @@ moaftme.MCEM <- function(t.l, t.u, right.censored, int.censored, X, J, M) {
 
 #test.sample.beta.j()
 #test.sampler.1()
-out <- test.sampler.2()
+#out <- test.sampler.2()
 #test.sample.rho()
 #test.sample.w()
 #test.sample.z()
