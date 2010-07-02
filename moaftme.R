@@ -1,6 +1,7 @@
 
 library(mvtnorm)
 library(MASS)
+options(error=dump.frames)
 
 # t - registered time, no censorship, nx1
 # t.l, t.u - lower and upper bounds in interval-censored data, nx1 each 
@@ -14,23 +15,52 @@ library(MASS)
 # sigma - sigma of AFT models, J x 1 
 # rho - coefficients of logistic link, J x p
 
-# matlab-like
-repmat <- function(a,n,m) { kronecker(matrix(1, n, m), a) }
+moaftme.sampler <- function(t.l, t.u, right.censored, int.censored, X, J, M, 
+        n0, S0, b0, B0, tune) {
+    n <- nrow(X)
+    p <- ncol(X)
 
-# F(t_i | x_i, theta)
-dF.i <- function(t.i, x.i, .beta, .rho, .sigma) {
-    .p <- exp(x.i %*% t(.rho)) 
-    .p <- .p / rowSums(.p)
-    #sum(.p*pnorm((log(t.i)-x.i%*%.beta)/.sigma))
-    sum(.p*plnorm(t.i, meanlog=x.i%*%t(.beta), sdlog=.sigma))
-}
+    # samples
+    w.samples <- matrix(0, nrow=M, ncol=n)
+    Z.samples <- array(0, c(M, n, J))
+    sigma.samples <- matrix(nrow=M, ncol=J)
+    beta.samples <- array(0, c(M, J, p))
+    rho.samples <- array(0, c(M, J, p))
 
-# F(t_i | x_i, theta)
-df.i <- function(t.i, x.i, .beta, .rho, .sigma) {
-    .p <- exp(x.i %*% t(.rho)) 
-    .p <- .p / rowSums(.p)
-    #sum(.p*pnorm((log(t.i)-x.i%*%.beta)/.sigma))
-    sum(.p*dlnorm(t.i, meanlog=x.i%*%t(.beta), sdlog=.sigma))
+    # initial sampling
+    Z.samples[1,,] <- t(rmultinom(n, 1, rep(1/J, J)))
+    beta.samples[1,,] <- matrix(rnorm(p*J, mean=0, sd=10), ncol=p)
+    rho.samples[1,,] <- matrix(rnorm(p*J, mean=0, sd=10), ncol=p)
+    # set first col to zero for identifiability
+    rho.samples[1,1,] <- matrix(0, nrow=p, ncol=1)
+    sigma.samples[1,] <- matrix(1/rgamma(J, n0/2, n0*S0/2), nrow=1)
+
+    # main loop
+    for (m in 2:M) {
+        print(m)
+
+        w.samples[m,] <- sample.w(t.l, t.u, right.censored, int.censored,
+                Z.samples[m-1,,],
+                X,
+                beta.samples[m-1,,],
+                sigma.samples[m-1,])
+
+        Z.samples[m,,] <- sample.z(w.samples[m,], X,
+                beta.samples[m-1,,], 
+                rho.samples[m-1,,],
+                sigma.samples[m-1,])
+        # sample.beta uses log of time
+        Y <- log(w.samples[m,])
+        for (j in 1:J) {
+            out <- sample.beta.j(Y, X, Z.samples[m,,j], sigma.samples[m-1,j]^2, n0, S0, b0, B0)  
+            sigma.samples[m,j] <- sqrt(out$sig2j)
+            beta.samples[m,j,] <- t(out$beta.j)
+        }
+        out <- sample.rho(X, Z.samples[m,,], rho.samples[m-1,,], tune)
+        rho.samples[m,,] <- out$rho
+    }
+    list(w.samples=w.samples,Z.samples=Z.samples,sigma.samples=sigma.samples,
+            beta.samples=beta.samples,rho.samples=rho.samples)
 }
 
 # return .w, 1xp matrix of pseudo-observations
@@ -41,13 +71,12 @@ sample.w <- function(t.l, t.u, right.censored, int.censored, Z, X,
     .w <- matrix(nrow=1,ncol=nrow(X))
     for (i in 1:nrow(t.l)) {
         if (int.censored[i]==1) {
-            #xtb <- crossprod(X[i,], .beta[Z[i,],])
-            Fl <- plnorm(t.l[i], X[i,] %*% t(.beta[Z[i,],]), .sigma[Z[i,]])
-            Fu <- plnorm(t.u[i], X[i,] %*% t(.beta[Z[i,],]), .sigma[Z[i,]])
-            .w[i] <- qlnorm(runif(1, Fl, Fu), X[i,] %*% t(.beta[Z[i,],]), .sigma[Z[i,]])
+            Fl <- plnorm(t.l[i], crossprod(X[i,], .beta[Z[i,],]), .sigma[Z[i,]])
+            Fu <- plnorm(t.u[i], crossprod(X[i,], .beta[Z[i,],]), .sigma[Z[i,]])
+            .w[i] <- qlnorm(runif(1, Fl, Fu), crossprod(X[i,],.beta[Z[i,],]), .sigma[Z[i,]])
         } else if (right.censored[i]==1) {
-            Fl <- plnorm(t.l[i], X[i,] %*% t(.beta[Z[i,],]), .sigma[Z[i,]])
-            .w[i] <- qlnorm(runif(1, Fl, 1 ), X[i,] %*% t(.beta[Z[i,],]), .sigma[Z[i,]])
+            Fl <- plnorm(t.l[i], crossprod(X[i,], .beta[Z[i,],]), .sigma[Z[i,]])
+            .w[i] <- qlnorm(runif(1, Fl, 1 ), crossprod(X[i,],.beta[Z[i,],]), .sigma[Z[i,]])
         } else {
             .w[i] <- t.l[i]
         }
@@ -59,14 +88,26 @@ sample.w <- function(t.l, t.u, right.censored, int.censored, Z, X,
 sample.z <- function(w, X, .beta, .rho, .sigma) {
     # .p: nxj matrix where .p(i,j) = p(x.i, rho.j)
     xtr <- tcrossprod(X, .rho)
-    #browser()
     # logs to (try to) avoid overflow
     .p <- exp(xtr - repmat(log(rowSums(exp(xtr))), 1, ncol(X)))
     # .f: nxj matrix where .f(i,j) = .f_j(x.i, .beta.j) 
-    .f <- dlnorm(repmat(w, 1, ncol(.p)),meanlog=X %*% t(.beta),sdlog=repmat(matrix(.sigma,nrow=1), nrow(X), 1))
+    .f <- dlnorm(repmat(w, 1, ncol(.p)), tcrossprod(X,t(.beta)), repmat(matrix(.sigma,nrow=1), nrow(X), 1))
     # h: nxj matrix where
-    # h[i,j] = p_j(x_i,rho_j)*f_j(w_i|x_i,beta_j)/(sum_{j=1}^J(p_j(x_i,rho_j)*f_j(w_i|x_i,beta_j)))
-    h <- (.p * .f) / repmat(rowSums(.p * .f), 1, ncol(X))
+
+    h <- matrix(1, nrow=nrow(.p), ncol=ncol(.p))
+    for (j in 1:ncol(.p)) {
+        for (j2 in 1:ncol(.p)) {
+            if (j2 != j) {
+                h[,j] <- h[,j] + (.p[,j2]*.f[,j2])/(.p[,j]*.f[,j])
+                #(.p[,j2]*.f[,j2])
+                #(.p[,j]*.f[,j])
+                #print((.p[,j2]*.f[,j2])/(.p[,j]*.f[,j]))
+                #(1 + (.p[,j2]*.f[,j2])/(.p[,j]*.f[,j]))^(-1)
+            }
+        }
+    }
+    h <- 1/h
+
     Z <- matrix(nrow=nrow(X), ncol=nrow(.beta))
     for (i in 1:nrow(X)) {
         Z[i,] <- rmultinom(1, 1, h[i,])
@@ -103,7 +144,6 @@ sample.rho <- function(X, Z, .rho, tune) {
     # log posteriors of rows of a rho matrix
     # as a vector of length J
     log.post <- function(r) {
-        #browser()
         # TODO flatness for log.pri
         log.pri <- dmvnorm(r, rep(0, ncol(X)), 100*diag(ncol(X)),log=TRUE)
         exr <- exp(tcrossprod(X, r))
@@ -132,53 +172,23 @@ sample.rho <- function(X, Z, .rho, tune) {
     list(rho=.rho,accept=accept)
 }
 
-sampler <- function(t.l, t.u, right.censored, int.censored, X, J, M, 
-        n0, S0, b0, B0, tune) {
-    n <- nrow(X)
-    p <- ncol(X)
+# matlab-like
+repmat <- function(a,n,m) { kronecker(matrix(1, n, m), a) }
 
-    # samples
-    w.samples <- matrix(nrow=M, ncol=n)
-    Z.samples <- array(NA, c(M, n, J))
-    sigma.samples <- matrix(nrow=M, ncol=J)
-    beta.samples <- array(NA, c(M, J, p))
-    rho.samples <- array(NA, c(M, J, p))
+# F(t_i | x_i, theta)
+dF.i <- function(t.i, x.i, .beta, .rho, .sigma) {
+    .p <- exp(x.i %*% t(.rho)) 
+    .p <- .p / rowSums(.p)
+    #sum(.p*pnorm((log(t.i)-x.i%*%.beta)/.sigma))
+    sum(.p*plnorm(t.i, meanlog=x.i%*%t(.beta), sdlog=.sigma))
+}
 
-    # initial sampling
-    beta.samples[1,,] <- matrix(rnorm(p*J, mean=0, sd=10), ncol=p)
-    rho.samples[1,,] <- matrix(rnorm(p*J, mean=0, sd=10), ncol=p)
-    # set first col to zero for identifiability
-    rho.samples[1,1,] <- matrix(0, nrow=p, ncol=1)
-    sigma.samples[1,] <- matrix(1/rgamma(J, n0/2, n0*S0/2), nrow=1)
-
-    #browser()
-    # main loop
-    for (m in 2:M) {
-
-        #browser()
-        w.samples[m,] <- sample.w(t.l, t.u, right.censored, int.censored,
-                Z.samples[m-1,,],
-                X,
-                beta.samples[m-1,,],
-                sigma.samples[m-1,])
-
-        print(m)
-        Z.samples[m,,] <- sample.z(w.samples[m,], X,
-                beta.samples[m-1,,], 
-                rho.samples[m-1,,],
-                sigma.samples[m-1,])
-        # sample.beta uses log of time
-        Y <- log(w.samples[m,])
-        for (j in 1:J) {
-            out <- sample.beta.j(Y, X, Z.samples[m,,j], sigma.samples[m-1,j]^2, n0, S0, b0, B0)  
-            sigma.samples[m,j] <- sqrt(out$sig2j)
-            beta.samples[m,j,] <- t(out$beta.j)
-        }
-        out <- sample.rho(X, Z.samples[m,,], rho.samples[m-1,,], tune)
-        rho.samples[m,,] <- out$rho
-    }
-    list(w.samples=w.samples,Z.samples=Z.samples,sigma.samples=sigma.samples,
-            beta.samples=beta.samples,rho.samples=rho.samples)
+# F(t_i | x_i, theta)
+df.i <- function(t.i, x.i, .beta, .rho, .sigma) {
+    .p <- exp(x.i %*% t(.rho)) 
+    .p <- .p / rowSums(.p)
+    #sum(.p*pnorm((log(t.i)-x.i%*%.beta)/.sigma))
+    sum(.p*dlnorm(t.i, meanlog=x.i%*%t(.beta), sdlog=.sigma))
 }
 
 sim.data <- function(plot=FALSE) {
@@ -209,9 +219,6 @@ sim.data <- function(plot=FALSE) {
             rho=.rho,
             sigma=.sigma,
             X=X)
-    #J <- 2
-    #M <- 10
-    #sampler(t., t.l, t.u, t.p, right.censored, int.censored, X, J, M)
 }
 
 test.sample.z <- function() {
@@ -271,26 +278,6 @@ test.sample.beta.j <- function() {
     sample.beta.j(Y,X,z,sig2j=3,n0=1,S0=2,b0=matrix(0,2,1),B0=100*diag(2))
 }
 
-test.sampler.1 <- function() {
-    n0 <- 1
-    S0 <- diag(100)
-    b0 <- 1
-    B0 <- 1
-    tune <- 1
-    M <- 10
-    J <- 2
-
-    sim <- sim.data()
-    X <- cbind(rep(1,nrow(sim$X)), sim$X)
-
-    rc <- sim$right.censored
-    ic <- sim$int.censored
-
-    out <- sampler(sim$t.l, sim$t.u, rc, ic, X, J, M, 
-        n0=1, S0=2, b0=matrix(0,2,1), B0=100*diag(2), tune)
-    print(out)
-}
-
 test.sample.rho <- function() {
     d <- sim.data() 
     # use uncensored data
@@ -306,11 +293,66 @@ test.sample.rho <- function() {
     }
 }
 
-EM <- function(t.l, t.u, right.censored, int.censored, X, J, M) {
+test.sampler.1 <- function() {
+    n0 <- 1
+    S0 <- diag(100)
+    b0 <- 1
+    B0 <- 1
+    tune <- 1
+    M <- 10
+    J <- 2
+
+    sim <- sim.data()
+    X <- cbind(rep(1,nrow(sim$X)), sim$X)
+
+    rc <- sim$right.censored
+    ic <- sim$int.censored
+
+    out <- moaftme.sampler(sim$t.l, sim$t.u, rc, ic, X, J, M, 
+        n0=1, S0=2, b0=matrix(0,2,1), B0=100*diag(2), tune)
+}
+
+test.sampler.2 <- function() {
+    n0 <- 1
+    S0 <- diag(100)
+    b0 <- 1
+    B0 <- 1
+    tune <- 1
+    M <- 2000
+    J <- 2
+
+    d <- read.table('flourbeetle.txt', header=TRUE)
+
+    X <- model.matrix(~ X1, d)
+
+    rc <- d$rc
+    ic <- d$ic
+    t.l <- matrix(d$t.l,ncol=1)
+    t.u <- matrix(d$t.u,ncol=1)
+
+    out <- moaftme.sampler(t.l, t.u, rc, ic, X, J, M, 
+        n0=1, S0=2, b0=matrix(0,2,1), B0=100*diag(2), tune)
+    out
+}
+
+moaftme.MCEM <- function(t.l, t.u, right.censored, int.censored, X, J, M) {
+
+    n <- nrow(X)
+    p <- ncol(X)
+    .beta <- rnorm(p*J, 0, 1e-6)
+    .rho  <- rnorm(p*J, 0, 1e-6)
+    .sigma <- 1/rgamma(J, 1/2, 1/2)
+
+    wm <- matrix(NA, nrow=M, ncol=p)
+    for (m in 1:M) {
+
+    }
+
 }
 
 #test.sample.beta.j()
-test.sampler.1()
+#test.sampler.1()
+out <- test.sampler.2()
 #test.sample.rho()
 #test.sample.w()
 #test.sample.z()
