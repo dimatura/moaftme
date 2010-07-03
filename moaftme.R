@@ -40,6 +40,8 @@ moaftme.sampler <- function(t.l, t.u, right.censored, int.censored, X, J, M,
     sigma.samples[1,] <- matrix(1, nrow=1, ncol=J)
     w.samples[1,] <- matrix(0, nrow=n)
 
+    accepts <- rep(0, J)
+
     # main loop
     for (m in 2:M) {
         print(m)
@@ -70,9 +72,11 @@ moaftme.sampler <- function(t.l, t.u, right.censored, int.censored, X, J, M,
         }
         out <- sample.rho(X, Z.samples[m,,], rho.samples[m-1,,], tune)
         rho.samples[m,,] <- out$rho
+        accepts <- accepts + out$accept
+        acc.rate <- (accepts*100)/m
     }
     list(w.samples=w.samples,Z.samples=Z.samples,sigma.samples=sigma.samples,
-            beta.samples=beta.samples,rho.samples=rho.samples)
+            beta.samples=beta.samples,rho.samples=rho.samples,acc.rate=acc.rate)
 }
 
 # return .w, 1xp matrix of pseudo-observations
@@ -201,10 +205,10 @@ sample.beta.j <- function(Y,X,z,sig2j,n0,S0,b0,B0) {
     B0<-1000*diag(ncol(X.s))
     B1<- ginv(ginv(B0) + t(X.s) %*% X.s)
     b1<-B1%*%(ginv(B0)%*%b0 + t(X.s)%*%Y.s)
-    beta.j<-rmvt(1,b1,B1,n1)
-
     beta.h<- ginv(t(X.s)%*% X.s ) %*% t(X.s) %*% Y.s
     n1<-n0 + .n
+    #beta.j<- t(rmvt(1,B1,n1)) + b1
+    beta.j<- t(rmvt(1,B1,n1)) + b1
     S2 <- t(Y.s)%*% ( diag(.n) - X.s%*%ginv(t(X.s)%*% X.s)%*%t(X.s) )%*% Y.s / (.n - ncol(X.s))
     n1S1<-n0*S0 + (.n-p)*S2[1,1] + t(beta.h - b0)%*% ginv( B0 + ginv(t(X.s)%*%X.s) ) %*% (beta.h -b0)
     sigma.j <- 1/ rgamma(1,n1/2,n1S1/2)
@@ -389,8 +393,8 @@ test.sampler.2 <- function() {
     S0 <- diag(100)
     b0 <- 1
     B0 <- 1
-    tune <- 1
-    M <- 100
+    tune <- 50
+    M <- 500
     J <- 2
 
     d <- read.table('flourbeetle.txt', header=TRUE)
@@ -426,17 +430,23 @@ moaftme.MCEM <- function(t.l, t.u, right.censored, int.censored, X, J, M) {
 #test.sampler.1()
 out <- test.sampler.2()
 
-#ts.plot(out$beta[,1,1])
-#ts.plot(out$beta[,1,2])
-#ts.plot(out$beta[,2,1])
-#ts.plot(out$beta[,2,2])
-#ts.plot(out$sigma[,1])
-#ts.plot(out$sigma[,2])
-#ts.plot(out$sigma[,3])
-#ts.plot(out$rho[,3,1])
-#matplot(cbind(out$beta[,1,1], 10*out$sigma[,1]), type='l')
-#matplot(out$beta[,2,1:2], type='l')
-#matplot(out$rho[,2,1:2], type='l')
+if (FALSE) {
+    ts.plot(out$beta[,1,1])
+    plot(density(out$beta[,1,1]))
+    ts.plot(out$beta[,1,2])
+    ts.plot(out$beta[,2,1])
+    ts.plot(out$beta[,2,2])
+    ts.plot(out$sigma[,1])
+    plot(density(out$sigma[,1]))
+    ts.plot(out$sigma[,2])
+    ts.plot(out$sigma[,3])
+    ts.plot(out$rho[,2,1])
+    ts.plot(out$rho[,3,1])
+    matplot(cbind(out$beta[,1,1], 10*out$sigma[,1]), type='l')
+    matplot(out$beta[,1,1:2], type='l')
+    matplot(out$rho[,1,1:2], type='l')
+    matplot(out$rho[,2,1:2], type='l')
+}
 
 #test.sample.rho()
 #test.sample.w()
