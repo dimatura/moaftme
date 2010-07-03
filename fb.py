@@ -19,7 +19,7 @@ data=\
 
 in_data = np.array(data).reshape((-1,4))
 
-print 'X1 X2 t.l t.u ic rc'
+print 'ld t.l t.u ic rc'
 # 1,x,tl,tu,ic,rc,
 for d in xrange(len(logdose)):
     x = logdose[d]
