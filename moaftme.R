@@ -62,7 +62,6 @@ moaftme.sampler <- function(t.l, t.u, right.censored, int.censored, X, J, M,
         #print (Z.samples[m,,])
         
         if (any(colSums(Z.samples[m,,])==0)) {
-            browser()
         }
 
         # sample.beta uses log of time
@@ -158,8 +157,8 @@ sample.z <- function(w, X, .beta, .rho, .sigma) {
     xtr <- tcrossprod(X, .rho)
     # logs to (try to) avoid overflow
     .p <- exp(xtr - repmat(log(rowSums(exp(xtr))), 1, nrow(.rho)))
-    # .f: nxj matrix where .f(i,j) = .f_j(x.i, .beta.j) 
 
+    # .f: nxj matrix where .f(i,j) = .f_j(x.i, .beta.j) 
     .f <- dlnorm(repmat(w, 1, ncol(.p)), tcrossprod(X,.beta), repmat(matrix(.sigma,nrow=1), nrow(X), 1))
     # h: nxj matrix where
 
@@ -167,22 +166,23 @@ sample.z <- function(w, X, .beta, .rho, .sigma) {
     #print(w)
     #print (.f)
 
-    h <- matrix(1, nrow=nrow(.p), ncol=ncol(.p))
-    for (j in 1:ncol(.p)) {
-        for (j2 in 1:ncol(.p)) {
-            if (j2 != j) {
-                h[,j] <- h[,j] + (.p[,j2]*.f[,j2])/(.p[,j]*.f[,j])
-                #(.p[,j2]*.f[,j2])
-                #(.p[,j]*.f[,j])
-                #print((.p[,j2]*.f[,j2])/(.p[,j]*.f[,j]))
-                #(1 + (.p[,j2]*.f[,j2])/(.p[,j]*.f[,j]))^(-1)
-            }
-        }
-    }
-    h <- 1/h
+    #h <- matrix(1, nrow=nrow(.p), ncol=ncol(.p))
+    #for (j in 1:ncol(.p)) {
+    #    for (j2 in 1:ncol(.p)) {
+    #        if (j2 != j) {
+    #            h[,j] <- h[,j] + (.p[,j2]*.f[,j2])/(.p[,j]*.f[,j])
+    #            #(.p[,j2]*.f[,j2])
+    #            #(.p[,j]*.f[,j])
+    #            #print((.p[,j2]*.f[,j2])/(.p[,j]*.f[,j]))
+    #            #(1 + (.p[,j2]*.f[,j2])/(.p[,j]*.f[,j]))^(-1)
+    #        }
+    #    }
+    #}
+    #h <- 1/h
+
+    h <- .f * .p
 
     if (any(is.nan(h))) {
-        browser()
         #print("nan")
         #print(xtr)
         ##print(rowSums(exp(xtr)))
@@ -271,7 +271,7 @@ sample.rho <- function(X, Z, .rho, tune) {
     # as a vector of length J
     log.post <- function(r) {
         # TODO flatness for log.pri
-        log.pri <- dmvnorm(r, rep(0, ncol(X)), 100*diag(ncol(X)),log=TRUE)
+        log.pri <- dmvnorm(r, rep(0, ncol(X)), 10*diag(ncol(X)),log=TRUE)
         exr <- exp(tcrossprod(X, r))
         exr <- exr/repmat(rowSums(exr), 1, ncol(exr))
         log.lik <- colSums(log(exr))
@@ -298,6 +298,7 @@ sample.rho <- function(X, Z, .rho, tune) {
     exr <- exp(tcrossprod(X, .rho))
     exr <- exr/repmat(rowSums(exr), 1, ncol(exr))
     matplot(y=exr)
+    #matplot(t(.rho), type='l')
 
     list(rho=.rho,accept=accept)
 }
