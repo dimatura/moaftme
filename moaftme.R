@@ -3,8 +3,6 @@ library(mvtnorm)
 library(MASS)
 options(error=dump.frames)
 
-?rmvt
-
 # t - registered time, no censorship, nx1
 # t.l, t.u - lower and upper bounds in interval-censored data, nx1 each 
 # if data is uncensored, they should be equal (but only t.l is used)
@@ -62,19 +60,24 @@ moaftme.sampler <- function(t.l, t.u, right.censored, int.censored, X, J, M,
                 rho.samples[m-1,,],
                 sigma.samples[m-1,])
         #print (Z.samples[m,,])
+        
+        if (any(colSums(Z.samples[m,,])==0)) {
+            browser()
+        }
 
         # sample.beta uses log of time
         Y <- log(w.samples[m,])
-        for (j in 1:J) {
-            out <- sample.beta.j(Y, X, Z.samples[m,,j], sigma.samples[m-1,j]^2, n0, S0, b0, B0)  
-            sigma.samples[m,j] <- sqrt(out$sig2j)
-            beta.samples[m,j,] <- t(out$beta.j)
-        }
+        #out <- sample.beta.2(Y, X, Z.samples[m,,])
+        out <- sample.beta(Y, X, Z.samples[m,,], n0, S0, b0, B0)
+        beta.samples[m,,] <- out$beta
+        sigma.samples[m,] <- out$sigma
+        
         out <- sample.rho(X, Z.samples[m,,], rho.samples[m-1,,], tune)
         rho.samples[m,,] <- out$rho
         accepts <- accepts + out$accept
-        acc.rate <- (accepts*100)/m
+
     }
+    acc.rate <- (accepts*100)/m
     list(w.samples=w.samples,Z.samples=Z.samples,sigma.samples=sigma.samples,
             beta.samples=beta.samples,rho.samples=rho.samples,acc.rate=acc.rate)
 }
@@ -196,23 +199,67 @@ sample.z <- function(w, X, .beta, .rho, .sigma) {
 
 # Y: log(w)
 # z: column of memberships for jth component
-sample.beta.j <- function(Y,X,z,sig2j,n0,S0,b0,B0) {
-    X.s<- matrix(X[z==1,],nrow=length(z[z==1]) ,ncol=ncol(X))
-    Y.s<- Y[z==1]
-    .n <-nrow(X.s)
-    p <- ncol(X.s)
-    b0<-matrix(0,ncol(X.s),1)
-    B0<-1000*diag(ncol(X.s))
-    B1<- ginv(ginv(B0) + t(X.s) %*% X.s)
-    b1<-B1%*%(ginv(B0)%*%b0 + t(X.s)%*%Y.s)
-    beta.h<- ginv(t(X.s)%*% X.s ) %*% t(X.s) %*% Y.s
-    n1<-n0 + .n
-    #beta.j<- t(rmvt(1,B1,n1)) + b1
-    beta.j<- t(rmvt(1,B1,n1)) + b1
-    S2 <- t(Y.s)%*% ( diag(.n) - X.s%*%ginv(t(X.s)%*% X.s)%*%t(X.s) )%*% Y.s / (.n - ncol(X.s))
-    n1S1<-n0*S0 + (.n-p)*S2[1,1] + t(beta.h - b0)%*% ginv( B0 + ginv(t(X.s)%*%X.s) ) %*% (beta.h -b0)
-    sigma.j <- 1/ rgamma(1,n1/2,n1S1/2)
-    list("beta.j" = beta.j,"sig2j"=sigma.j)
+sample.beta <- function(Y,X,Z,n0,S0,b0,B0) {
+
+    #J x p
+    out.beta <- matrix(NA, nrow=ncol(Z), ncol=ncol(X))
+    #1 x J
+    out.sigma <- matrix(NA, nrow=1, ncol=ncol(Z))
+    for (j in 1:nrow(out.beta)) {
+        #out <- sample.beta.j(Y, X, Z.samples[m,,j], sigma.samples[m-1,j]^2, n0, S0, b0, B0)  
+        #sigma.samples[m,j] <- sqrt(out$sig2j)
+        #beta.samples[m,j,] <- t(out$beta.j)
+        X.s<- matrix(X[Z[,j]==1,],nrow=sum(Z[,j]) ,ncol=ncol(X))
+        Y.s<- Y[Z[,j]==1]
+        .n <-nrow(X.s)
+        p <- ncol(X.s)
+        b0<-matrix(0,ncol(X.s),1)
+        B0<-1000*diag(ncol(X.s))
+        B1<- ginv(ginv(B0) + t(X.s) %*% X.s)
+        b1<-B1%*%(ginv(B0)%*%b0 + t(X.s)%*%Y.s)
+        beta.h<- ginv(t(X.s)%*% X.s ) %*% t(X.s) %*% Y.s
+        n1<-n0 + .n
+        #beta.j<- t(rmvt(1,B1,n1)) + b1
+        beta.j<- t(rmvt(1,B1,n1)) + b1
+        S2 <- t(Y.s)%*% ( diag(.n) - X.s%*%ginv(t(X.s)%*% X.s)%*%t(X.s) )%*% Y.s / (.n - ncol(X.s))
+        n1S1<-n0*S0 + (.n-p)*S2[1,1] + t(beta.h - b0)%*% ginv( B0 + ginv(t(X.s)%*%X.s) ) %*% (beta.h -b0)
+        out.sigma[j] <- sqrt(1/ rgamma(1,n1/2,n1S1/2))
+        out.beta[j,] <- beta.j 
+        #while (is.nan(sigma.j))  {
+        #    sigma.j <- 1/ rgamma(1,n1/2,n1S1/2)
+        #}
+    }
+    list(beta=out.beta,sigma=out.sigma)
+}
+
+sample.beta.2 <- function(Y, X, Z) {
+    #J x p
+    out.beta <- matrix(NA, nrow=ncol(Z), ncol=ncol(X))
+    #1 x J
+    out.sigma <- matrix(NA, nrow=1, ncol=ncol(Z))
+
+    # 0,1 -> T,F for indexing
+    Z <- (Z==1)
+    for (j in 1:nrow(out.beta)) {
+        X.s <- X[Z[,j],]
+        Y.s <- matrix(Y[Z[,j]],ncol=1)
+        fit = lm(Y.s ~ 0 + X.s)
+        .beta.hat <- matrix(fit$coef, c(1, fit$rank))
+        s2 <- sum(fit$residuals^2)/fit$df.residual
+        shape <- fit$df.residual/2
+        rate <- fit$df.residual/2 * s2
+        vbeta <- vcov(fit)/s2
+        out.sigma[j] <- sqrt(1/rgamma(1, shape=shape, rate=rate))
+        print(.beta.hat)
+        print(vbeta)
+        .beta <- mvrnorm(1, rep(0, ncol(.beta.hat)), vbeta) 
+        out.beta[j,] <- .beta.hat + .beta * out.sigma[j]
+    }
+    #log.post <- function(.beta) {
+    #    P1 <- X %*% solve(t(X.s) %*% X) %*% t(X)
+    #    -(p+1)/2 * log(n+1) - n/2 * log(t(y) %*% y -n/(n+1) * t(y) %*% P1 %*% y - 1/(n+1) * t(.beta) %*% t(X) %*% P1 %*% X %*% .beta)
+    #}
+    list(beta=out.beta, sigma=out.sigma)
 }
 
 # .rho: rho matrix Jxp
@@ -248,6 +295,10 @@ sample.rho <- function(X, Z, .rho, tune) {
         } 
     }
 
+    exr <- exp(tcrossprod(X, .rho))
+    exr <- exr/repmat(rowSums(exr), 1, ncol(exr))
+    matplot(y=exr)
+
     list(rho=.rho,accept=accept)
 }
 
@@ -268,7 +319,7 @@ df.i <- function(t.i, x.i, .beta, .rho, .sigma) {
 }
 
 sim.data <- function(plot=FALSE) {
-    n <- 100
+    n <- 1000
     X <- matrix(sort(runif(n, -2, 2)),ncol=1)
     .beta <- matrix(c(1,-1), nrow=2)
     .rho <- matrix(c(16, 8), nrow=2)
@@ -375,7 +426,7 @@ test.sampler.1 <- function() {
     b0 <- 1
     B0 <- 1
     tune <- 1
-    M <- 10
+    M <- 5000
     J <- 2
 
     sim <- sim.data()
@@ -394,7 +445,7 @@ test.sampler.2 <- function() {
     b0 <- 1
     B0 <- 1
     tune <- 50
-    M <- 500
+    M <- 3000
     J <- 2
 
     d <- read.table('flourbeetle.txt', header=TRUE)
@@ -428,7 +479,7 @@ moaftme.MCEM <- function(t.l, t.u, right.censored, int.censored, X, J, M) {
 
 #test.sample.beta.j()
 #test.sampler.1()
-out <- test.sampler.2()
+#out <- test.sampler.2()
 
 if (FALSE) {
     ts.plot(out$beta[,1,1])
@@ -453,4 +504,5 @@ if (FALSE) {
 #test.sample.z()
 #sim.data(TRUE)
 #package.skeleton(name="moaftme", namespace=TRUE)
-#test.sampler.1()
+test.sampler.1()
+#test.sampler.2()
