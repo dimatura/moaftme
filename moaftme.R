@@ -322,7 +322,7 @@ sample.beta.3 <- function(w, X, Z, .beta, .sigma,
     log.post <- function(w.s, X.s, .b, .t) {
         # s: log posteriors of a beta matrix (J rows) and sigma vector (J)
         # as a vector of length J
-        s <- ((alpha0 + n)/2 - 1)*log(.t)
+        s <- ((alpha0 + nrow(X.s))/2 - 1)*log(.t)
         s <- s + (-.t/2) * colSums((tcrossprod(X, .b) - repmat(log(w), 1, J))^2)
         s <- s + t(as.matrix(diag(crossprod(.b)))) + lambda0
         s <- s - sumlogw
@@ -335,8 +335,8 @@ sample.beta.3 <- function(w, X, Z, .beta, .sigma,
         if (!any(Z[,j])) {
             next
         }
-        w.s <- X[Z[,j],]
-        X.s <- matrix(w[Z[,j]],ncol=1)
+        X.s <- X[Z[,j],]
+        w.s <- matrix(w[Z[,j]],ncol=1)
         .tau <- 1/.sigma
         cand.beta[j,] <- rmvnorm(1, .beta[j,], diag(p)*tune.beta)
         # vector of ratios, 1xJ
@@ -380,6 +380,9 @@ sample.rho <- function(X, Z, .rho, gamma0, tune) {
     n <- nrow(X)
     p <- ncol(X)
     J <- ncol(Z)
+
+    cand.rho <- .rho
+
     # log posteriors of rows of a rho matrix
     # as a vector of length J
     log.post <- function(r) {
@@ -388,7 +391,7 @@ sample.rho <- function(X, Z, .rho, gamma0, tune) {
         exr <- exp(tcrossprod(X, r))
         exr <- exr/repmat(rowSums(exr), 1, ncol(exr))
         log.lik <- colSums(log(exr))
-        log.lik + log.pri
+        sum(log.lik + log.pri)
     }
 
     cand.rho <- matrix(0, nrow=nrow(.rho), ncol=ncol(.rho))
@@ -397,11 +400,20 @@ sample.rho <- function(X, Z, .rho, gamma0, tune) {
         cand.rho[j,] <- rmvnorm(1, .rho[j,], tune*diag(ncol(.rho)))
     }
 
-    # vector of ratios, 1xJ
-    ratio <- exp(log.post(cand.rho) - log.post(.rho)) 
 
+    Z <- (Z==1)
     accept <- 0
-    for (j in 2:nrow(.rho)) {
+    for (j in 2:J) {
+        if (!any(Z[,j])) {
+            next
+        }
+        X.s <- X[Z[,j],]
+
+        cand.rho[j,] <- rmvnorm(1, .rho[j,], tune*diag(ncol(.rho)))
+
+        # vector of ratios, 1xJ
+        ratio <- exp(log.post(cand.rho) - log.post(.rho)) 
+
         if (runif(1) < ratio[j]) {
             accept <- accept + 1
             .rho[j,] <- cand.rho[j,] 
