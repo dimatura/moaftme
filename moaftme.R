@@ -21,23 +21,20 @@ moaftme.sampler <- function(t.l, t.u, right.censored, int.censored, X, J, M,
     n <- nrow(X)
     p <- ncol(X)
 
-    # samples
-    w.samples <- matrix(NA, nrow=M, ncol=n)
-    Z.samples <- array(NA, c(M, n, J))
+    w <- rep(NA, n)
+    # we 0:(J-1) for use with C indexing
+    Z <- sample(0:(J-1), size=n, replace=TRUE)
+
     sigma.samples <- matrix(nrow=M, ncol=J)
-    # usar B0
     beta.samples <- array(NA, c(M, J, p))
     rho.samples <- array(NA, c(M, J, p))
 
-    # initial sampling
-    Z.samples[1,,] <- t(rmultinom(n, 1, rep(1/J, J)))
     beta.samples[1,,] <- matrix(rnorm(p*J, mean=0, sd=1), ncol=p)
     rho.samples[1,,] <- matrix(rnorm(p*J, mean=0, sd=1), ncol=p)
     # set first col to zero for identifiability
     rho.samples[1,1,] <- matrix(0, nrow=p, ncol=1)
     #sigma.samples[1,] <- matrix(1/rgamma(J, n0/2, n0*S0/2), nrow=1)
     sigma.samples[1,] <- matrix(1, nrow=1, ncol=J)
-    w.samples[1,] <- matrix(0, nrow=n)
 
     accepts <- rep(0, J)
 
@@ -51,24 +48,34 @@ moaftme.sampler <- function(t.l, t.u, right.censored, int.censored, X, J, M,
     for (m in 2:M) {
         print(m)
 
-        w.samples[m,] <- sample.w(t.l, t.u, right.censored, int.censored,
-                Z.samples[m-1,,],
-                X,
-                beta.samples[m-1,,],
-                sigma.samples[m-1,])
-
-        Z.samples[m,,] <- sample.z.2(w.samples[m,], X,
+        out.wz <- sample.wz(t.l, t.u, 
                 beta.samples[m-1,,], 
                 rho.samples[m-1,,],
-                sigma.samples[m-1,])
+                sigma.samples[m-1,],
+                right.censored,
+                int.censored,
+                Z, X)
+        w <- out.wz$w
+        Z <- out.wz$Z
+
+        #w <- sample.w(t.l, t.u, right.censored, int.censored,
+        #        Z.samples[m-1,,],
+        #        X,
+        #        beta.samples[m-1,,],
+        #        sigma.samples[m-1,])
+
+        #Z.samples[m,,] <- sample.z.2(w.samples[m,], X,
+        #        beta.samples[m-1,,], 
+        #        rho.samples[m-1,,],
+        #        sigma.samples[m-1,])
         
         # sample.beta uses log of time
-        Y <- log(w.samples[m,])
-        out <- sample.beta(Y, X, Z.samples[m,,], n0, S0, b0, B0)
+        Y <- log(w)
+        out <- sample.beta(Y, X, Z, n0, S0, b0, B0, J)
         beta.samples[m,,] <- out$beta
         sigma.samples[m,] <- out$sigma
         
-        out <- sample.rho(X, Z.samples[m,,], rho.samples[m-1,,], gamma0, tune$rho)
+        out <- sample.rho(X, Z, rho.samples[m-1,,], gamma0, tune$rho)
         rho.samples[m,,] <- out$rho
 
         accepts.rho <- accepts.rho + out$accept
@@ -76,8 +83,10 @@ moaftme.sampler <- function(t.l, t.u, right.censored, int.censored, X, J, M,
 
     accepts.rho <- (accepts.rho*100)/m
 
-    list(w.samples=w.samples,Z.samples=Z.samples,sigma.samples=sigma.samples,
-            beta.samples=beta.samples,rho.samples=rho.samples,accepts.rho=accepts.rho)
+    list(sigma.samples=sigma.samples,
+         beta.samples=beta.samples,
+         rho.samples=rho.samples,
+         accepts.rho=accepts.rho)
 }
 
 # return .w, 1xp matrix of pseudo-observations
@@ -121,6 +130,44 @@ sample.w <- function(t.l, t.u, right.censored, int.censored, Z, X,
     .w
 }
 
+sample.wz <- function(t.l, t.u, .beta, .rho, .sigma, 
+                      right.censored, int.censored, Z, X) {
+
+    Xrho <- tcrossprod(X, .rho)
+    Xbeta <- tcrossprod(X, .beta)
+
+    out.w <- .C("dm_sample_w", 
+              tl=as.double(t.l),
+              tu=as.double(t.u),
+              right_censored=as.integer(right.censored),
+              int_censored=as.integer(int.censored),
+              Z=as.integer(Z),
+              Xbeta=as.double(Xbeta),
+              Xrho=as.double(Xrho),
+              sigma=as.double(.sigma),
+              nptr=as.integer(nrow(X)),
+              pptr=as.integer(ncol(X)),
+              Jptr=as.integer(nrow(.beta)),
+              w=double(nrow(X)))
+    w <- out.w$w
+    #browser()
+    
+    out.z <- .C("dm_sample_z", 
+              w=as.double(w),
+              Xbeta=as.double(Xbeta),
+              Xrho=as.double(Xrho),
+              sigma=as.double(.sigma),
+              nptr=as.integer(nrow(X)),
+              pptr=as.integer(ncol(X)),
+              Jptr=as.integer(nrow(.beta)),
+              Z=integer(nrow(X)))
+
+    Z <- out.z$Z
+    #browser()
+
+    list(w=w,Z=Z)
+}
+ 
 dF.i <- function(t.i, x.i, .beta, .rho, .sigma) {
     .p <- exp(tcrossprod(x.i, .rho))
     .p <- .p/repmat(rowSums(.p), 1, ncol(.p))
@@ -201,29 +248,36 @@ sample.z.2 <- function(w, X, .beta, .rho, .sigma) {
 
 # Y: log(w)
 # z: column of memberships for jth component
-sample.beta <- function(Y,X,Z,n0,S0,b0,B0) {
+sample.beta <- function(Y, X, Z, n0, S0, b0, B0, J) {
     #J x p
-    out.beta <- matrix(NA, nrow=ncol(Z), ncol=ncol(X))
+    out.beta <- matrix(NA, nrow=J, ncol=ncol(X))
     #1 x J
-    out.sigma <- matrix(NA, nrow=1, ncol=ncol(Z))
-    for (j in 1:nrow(out.beta)) {
+    out.sigma <- matrix(NA, nrow=1, ncol=J)
+    # note: R uses 1-based indexing, Z is 0-based
+    for (j in 0:(J-1)) {
         #out <- sample.beta.j(Y, X, Z.samples[m,,j], sigma.samples[m-1,j]^2, n0, S0, b0, B0)  
         #sigma.samples[m,j] <- sqrt(out$sig2j)
         #beta.samples[m,j,] <- t(out$beta.j)
-        X.s<- matrix(X[Z[,j]==1,],nrow=sum(Z[,j]) ,ncol=ncol(X))
-        Y.s<- Y[Z[,j]==1]
-        .n <-nrow(X.s)
+        X.s <- matrix(X[Z==j,],nrow=sum(Z==j), ncol=ncol(X))
+        Y.s <- Y[Z==j]
+        n <-nrow(X.s)
         p <- ncol(X.s)
-        B1<- ginv(ginv(B0) + t(X.s) %*% X.s)
-        b1<-B1%*%(ginv(B0)%*%b0 + t(X.s)%*%Y.s)
-        beta.h<- ginv(t(X.s)%*% X.s ) %*% t(X.s) %*% Y.s
-        n1<-n0 + .n
-        S2 <- t(Y.s)%*% (diag(.n) - X.s%*%ginv(t(X.s)%*% X.s)%*%t(X.s) )%*% Y.s / (.n - ncol(X.s))
-        n1S1<- n0*S0 + (.n-p)*S2[1,1] + t(beta.h - b0)%*% ginv( B0 + ginv(t(X.s)%*%X.s) ) %*% (beta.h -b0)
-        out.sigma[j] <- sqrt(1/ rgamma(1,n1/2,n1S1/2))
+        XtX <- crossprod(X.s)
+        invXtX <- ginv(XtX)
+        XtY <- crossprod(X.s, Y.s)
+        B1 <- ginv(ginv(B0) + XtX)
+        b1 <- B1 %*% (ginv(B0) %*% b0 + XtY)
+        beta.h <- ginv(XtX) %*% XtY 
+        n1 <- n0 + n
+
+        #S2 <- t(Y.s) %*% (diag(n) - X.s %*% ginv(t(X.s)%*% X.s)%*%t(X.s) )%*% Y.s / (n - ncol(X.s))
+        S2 <- crossprod(Y.s, (diag(n) - X.s %*% invXtX %*% t(X.s))) %*% Y.s / (n - ncol(X.s))
+
+        n1S1 <- n0*S0 + (n-p)*S2[1,1] + t(beta.h - b0) %*% ginv(B0 + invXtX) %*% (beta.h - b0)
+        out.sigma[j+1] <- sqrt(1/rgamma(1, n1/2, n1S1/2))
         #out.beta[j,] <- t(rmvt(1,B1,n1)) + b1
-        out.beta[j,] <- rmvnorm(1, b1, out.sigma[j] * B1)
-        if (is.nan(out.sigma[j])) {
+        out.beta[j+1,] <- rmvnorm(1, b1, out.sigma[j+1] * B1)
+        if (is.nan(out.sigma[j+1])) {
             print("Sigma nan")
             browser()
         }

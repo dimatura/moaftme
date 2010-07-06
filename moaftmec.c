@@ -128,6 +128,7 @@ void dm_sample_w(double *tl,
     int J = *Jptr;
     int i, j, k;
     for (i=0; i < n; ++i) {
+        Rprintf("Z[%d] = %d\n", i, Z[i]);
         if (right_censored[i]==0 && int_censored[i]==0) {
             w[i] = tl[i];
             continue;
@@ -159,4 +160,5 @@ void dm_sample_w(double *tl,
         }
     }
 }
+
 
