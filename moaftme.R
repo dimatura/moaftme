@@ -172,7 +172,7 @@ sample.z <- function(w, X, .beta, .rho, .sigma) {
 sample.z.2 <- function(w, X, .beta, .rho, .sigma) {
     Xrhot <- tcrossprod(X, .rho)
     Xbetat <- tcrossprod(X, .beta)
-    h <- matrix(0, nrow=nrow(X), ncol=nrow(.beta))
+    print ('sameplz')
     out <- .C("sample_z", 
               w=as.double(w),
               Xbetat=as.double(Xbetat),
@@ -181,7 +181,8 @@ sample.z.2 <- function(w, X, .beta, .rho, .sigma) {
               nptr=as.integer(nrow(X)),
               pptr=as.integer(ncol(X)),
               Jptr=as.integer(nrow(.beta)),
-              h=as.double(h))
+              Z=integer(nrow(X)))
+    browser()
       #print (out)
     h <- matrix(out$h, nrow=nrow(X))
     h <- h / repmat(rowSums(h), 1, ncol(h))

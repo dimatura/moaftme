@@ -3,7 +3,10 @@
 #include <Rmath.h>
 #include <R_ext/Print.h>
 
+#include <string.h>
+
 #define DM_SQR(x) ((x)*(x))
+#define DM_MULTINOM_EPS (1e-10) 
 
 void foo(double *a, double *b, int *lenptr, double *out) {
     int i;
@@ -34,14 +37,36 @@ void foo2(double *a, int *dim0, int *dim1, int *dim2) {
     }
 }
 
+// weighted random choice from [0,J)
+int dm_rmultinom(double *weights, double sum_weights, int J) {
+    double r;
+    int j;
+    Rprintf("sum weight: %f, J: %d\n", sum_weights, J);
+    if (sum_weights < DM_MULTINOM_EPS) {
+        // simply assume equiprobability
+        for (j=0; j < J; ++j) {
+            weights[j] = 1;
+        }
+        sum_weights = J;
+    }
+    r = runif(0, sum_weights);
+    for (j=0; j < J; ++j) {
+        r -= weights[j];
+        if (r < 0) {
+            return j;
+        }
+    }
+    return J-1;
+}
+
 void sample_z(double *w,
-        double *Xbetat,
-        double *Xrhot,
+        double *Xbeta,
+        double *Xrho,
         double *sigma,
         int *nptr, 
         int *pptr,
         int *Jptr,
-        double *h
+        int *Z
         ) {
     int n = *nptr;
     int p = *pptr;
@@ -49,16 +74,29 @@ void sample_z(double *w,
     int i, j, k;
     double *sigma2 = (double *) R_alloc(J, sizeof(double));
     double *logw = (double *) R_alloc(n, sizeof(double));
+    Rprintf("n=%d p=%d J=%d\n", n, p, J);
     for (j=0; j < J; ++j) {
-        sigma2[j] = sigma[j]*sigma[j];
+        sigma2[j] = DM_SQR(sigma[j]);
     }
     for (i=0; i < n; ++i) {
         logw[i] = log(w[i]);
     }
-    for (j=0; j < J; ++j) {
-        for (i=0; i< n; ++i) {
-            h[i + n*j] = (1/(sigma[j]*w[i]))*exp(Xrhot[i+n*j]-(0.5/sigma2[j])*DM_SQR(logw[i]-Xbetat[i+n*j]));
+    Rprintf("before loop\n");
+    // unnormalized row of hij
+    double *hi = (double *) R_alloc(J, sizeof(double));
+    for (i=0; i < n; ++i) {
+        Rprintf("i=%d\n", i);
+        // row sum for hij
+        double hi_sum=0;
+        // reset hi
+        memset(hi, 0, sizeof(double)*J);
+        Rprintf("after memset\n");
+        for (j=0; j< J; ++j) {
+            Rprintf("j=%d\n", j);
+            hi[j] = (1/(sigma[j]*w[i]))*exp(Xrho[i+n*j]-(0.5/sigma2[j])*DM_SQR(logw[i]-Xbeta[i+n*j]));
+            hi_sum += hi[j];
             //Rprintf("%f\n", h[i + n*j]);
         }
+        Z[i] = dm_rmultinom(hi, hi_sum, J);
     }
 }
