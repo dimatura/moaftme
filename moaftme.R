@@ -75,13 +75,15 @@ moaftme.sampler <- function(t.l, t.u, right.censored, int.censored, X, J, M,
         beta.samples[m,,] <- out$beta
         sigma.samples[m,] <- out$sigma
         
-        out <- sample.rho(X, Z, rho.samples[m-1,,], gamma0, tune$rho)
+        #out <- sample.rho(X, Z, rho.samples[m-1,,], gamma0, tune$rho)
+        out <- sample.rho.2(X, Z, rho.samples[m-1,,], gamma0, tune, J)
         rho.samples[m,,] <- out$rho
 
         accepts.rho <- accepts.rho + out$accept
     }
 
-    accepts.rho <- (accepts.rho*100)/m
+    # take into account that for each iteration we sample rho J times
+    accepts.rho <- (accepts.rho*J*100)/m
 
     list(sigma.samples=sigma.samples,
          beta.samples=beta.samples,
@@ -150,7 +152,6 @@ sample.wz <- function(t.l, t.u, .beta, .rho, .sigma,
               Jptr=as.integer(nrow(.beta)),
               w=double(nrow(X)))
     w <- out.w$w
-    #browser()
     
     out.z <- .C("dm_sample_z", 
               w=as.double(w),
@@ -163,7 +164,6 @@ sample.wz <- function(t.l, t.u, .beta, .rho, .sigma,
               Z=integer(nrow(X)))
 
     Z <- out.z$Z
-    #browser()
 
     list(w=w,Z=Z)
 }
@@ -229,7 +229,6 @@ sample.z.2 <- function(w, X, .beta, .rho, .sigma) {
               pptr=as.integer(ncol(X)),
               Jptr=as.integer(nrow(.beta)),
               Z=integer(nrow(X)))
-    browser()
       #print (out)
     h <- matrix(out$h, nrow=nrow(X))
     h <- h / repmat(rowSums(h), 1, ncol(h))
@@ -367,6 +366,28 @@ sample.rho <- function(X, Z, .rho, gamma0, tune) {
     list(rho=.rho,accept=accept)
 }
 
+sample.rho.2 <- function(X, Z, .rho, gamma0, tune, J) {
+    n <- nrow(X)
+    p <- ncol(X)
+    out  <- .C("dm_sample_rho", 
+              X=as.double(X),
+              Z=as.integer(Z),
+              rho=as.double(.rho),
+              gamma0=as.double(gamma0),
+              tune=tune,
+              nptr=as.integer(nrow(X)),
+              pptr=as.integer(ncol(X)),
+              Jptr=as.integer(J),
+              accept=integer(1))
+    .rho <- matrix(out$rho, nrow=J)
+
+    exr <- exp(tcrossprod(X, .rho))
+    exr <- exr/repmat(rowSums(exr), 1, ncol(exr))
+    matplot(y=exr, type='l')
+
+    list(rho=.rho, accept=out$accept)
+}
+
 # matlab-like
 repmat <- function(a,n,m) { kronecker(matrix(1, n, m), a) }
 
@@ -446,7 +467,7 @@ test.sampler.1 <- function() {
     S0 <- diag(100)
     b0 <- 1
     B0 <- 1
-    tune <- list(sigma=0.005, beta=0.005, rho=0.35)
+    tune <- 0.35
     M <- 1000
     J <- 3
 
@@ -467,7 +488,7 @@ test.sampler.2 <- function() {
     S0 <- diag(100)
     b0 <- 1
     B0 <- 1
-    tune <- list(sigma=1, beta=1, rho=0.25)
+    tune <- 0.25
     M <- 400
     J <- 3
 

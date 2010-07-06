@@ -128,7 +128,7 @@ void dm_sample_w(double *tl,
     int J = *Jptr;
     int i, j, k;
     for (i=0; i < n; ++i) {
-        Rprintf("Z[%d] = %d\n", i, Z[i]);
+        //Rprintf("Z[%d] = %d\n", i, Z[i]);
         if (right_censored[i]==0 && int_censored[i]==0) {
             w[i] = tl[i];
             continue;
@@ -161,4 +161,124 @@ void dm_sample_w(double *tl,
     }
 }
 
+double dm_log_post_rho_j(int j,
+                     double *rho_j,
+                     double *rho,
+                     double *X, 
+                     int *Z, 
+                     double *gamma0,
+                     double *tune,
+                     int n,
+                     int p,
+                     int J
+                     ) {
+    int i, k, l;
+
+    // evaluate logpriori(cand_rho) 
+    double log_pri = 0;
+    for (k=0; k < p; ++k) {
+        // dnorm args are x, mu, sigma, log
+        log_pri += dnorm(rho_j[k], 0, *gamma0, 1);
+    }
+    // evaluate loglik rho j
+    // loglik = sum_i [(xi * rho_j) - log(sum_l(exp(xi * rho_k)))] 
+    double log_lik = 0;
+    for (i=0; i < n; ++i) {
+        if (Z[i]!=j) {
+            continue; // only care about j candidates
+        }
+        // calculating log(exp(x_i rho)) = x_i rho
+        double xr = 0;
+        for (k=0; k < p; ++k) {
+            xr += X[i + n*k] * rho_j[k];
+        }
+        log_lik += xr;
+        // calculating sum_l(exp(x_i rho)))
+        double sum_exp_xrl = 0;
+        for (l = 0; l < J; ++l) {
+            if (l==j) {
+                // this is the new one
+                sum_exp_xrl += exp(xr);
+                continue; 
+            } 
+            double xrl = 0;
+            for (k=0; k < p; ++k) {
+                xrl += X[i + n*k] * rho[l + J*k];
+            }
+            sum_exp_xrl += exp(xrl);
+        }
+        log_lik -= log(sum_exp_xrl);
+    }
+    // log post = log lik + log pri
+    return log_pri + log_lik;
+}
+
+void dm_sample_rho(double *X, 
+                  int *Z,
+                  double *rho, // note: input and output
+                  double *gamma0,
+                  double *tune,
+                  int *nptr, 
+                  int *pptr,
+                  int *Jptr,
+                  int *accept 
+                  ) {
+    int n = *nptr;
+    int p = *pptr;
+    int J = *Jptr;
+    int i, j, k;
+    // for each j
+    //    generate candidate rho_j
+    //    evaluate logpost(rho_j candidate) 
+    //    evaluate logpost(rho_j current) 
+    //    evaluate alpha
+    //    accept or reject rho_j candidate
+
+    double *cand_rho = (double *) R_alloc(p, sizeof(double));
+    double *current_rho = (double *) R_alloc(p, sizeof(double));
+    // we start from 1 because first rho is always zero.
+    for (j=1; j < J; ++j) {
+        // generate candidate rho_j
+        for (k=0; k < p; ++k) {
+            cand_rho[k] = rnorm(rho[j + J*k], *tune);
+        }
+
+        double log_post_cand_rho = dm_log_post_rho_j(j,
+                                                     cand_rho,
+                                                     rho,
+                                                     X,
+                                                     Z,
+                                                     gamma0,
+                                                     tune,
+                                                     n,
+                                                     p,
+                                                     J);
+        // extract current rho_j; this is inefficient
+        for (k=0; k < p; ++k) {
+            current_rho[k] = rho[j + J*k];
+        }
+
+        // this should be cached
+        double log_post_current_rho = dm_log_post_rho_j(j,
+                                                        current_rho,
+                                                        rho,
+                                                        X,
+                                                        Z,
+                                                        gamma0,
+                                                        tune,
+                                                        n,
+                                                        p,
+                                                        J);
+        double ratio = exp(log_post_cand_rho - log_post_current_rho);
+        if (runif(0, 1) < ratio) {
+            // copy cand_rho into rho
+            for (k=0; k < p; ++k) {
+                rho[j + J*k] = cand_rho[k];
+            }
+            *accept = *accept + 1;
+        }
+        // else rho stays the same.
+    }
+
+}
 
