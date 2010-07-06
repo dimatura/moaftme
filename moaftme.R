@@ -260,72 +260,6 @@ sample.beta.2 <- function(Y, X, Z) {
     list(beta=out.beta, sigma=out.sigma)
 }
 
-sample.beta.3 <- function(w, X, Z, .beta, .sigma, 
-        alpha0, lambda0, tune.beta, tune.sigma) {
-
-    n <- nrow(X)
-    p <- ncol(X)
-    J <- ncol(Z)
-
-    #out.beta <- matrix(NA, nrow=J, ncol=p)
-    #out.sigma <- matrix(NA, nrow=1, ncol=J)
-    cand.beta <- .beta
-    cand.sigma <- .sigma
-
-    sumlogw <- t(as.matrix(rep(sum(log(w)), J)))
-
-    log.post <- function(w.s, X.s, .b, .t) {
-        # s: log posteriors of a beta matrix (J rows) and sigma vector (J)
-        # as a vector of length J
-        s <- ((alpha0 + nrow(X.s))/2 - 1)*log(.t)
-        s <- s + (-.t/2) * colSums((tcrossprod(X, .b) - repmat(log(w), 1, J))^2)
-        s <- s + t(as.matrix(diag(tcrossprod(.b)))) + lambda0
-        s <- s - sumlogw
-        sum(s)
-    }
-
-    Z <- (Z==1)
-    accept.beta <- 0
-    for (j in 1:J) {
-        if (!any(Z[,j])) {
-            next
-        }
-        X.s <- X[Z[,j],]
-        w.s <- matrix(w[Z[,j]],ncol=1)
-        .tau <- 1/.sigma
-        cand.beta[j,] <- rmvnorm(1, .beta[j,], diag(p)*tune.beta)
-        # vector of ratios, 1xJ
-        ratio <- exp(log.post(w.s, X.s, cand.beta, .tau) - log.post(w.s, X.s, .beta, .tau)) 
-        if (runif(1) < ratio) {
-            # incorporate change in current beta
-            .beta[j,] <- cand.beta[j,]
-            accept.beta <- accept.beta + 1
-        } else {
-            # revert change
-            cand.beta[j,] <- .beta[j,]
-        }
-    }
-
-    accept.sigma <- 0
-    for (j in 1:J) {
-        if (!any(Z[,j])) {
-            next
-        }
-        w.s <- X[Z[,j],]
-        X.s <- matrix(w[Z[,j]],ncol=1)
-        cand.sigma[j] <- rlnorm(1, .sigma[j], tune.sigma) 
-        ratio <- exp(log.post(w.s, X.s, cand.beta, 1/cand.sigma) - log.post(w.s, X.s, .beta, 1/.sigma)) 
-        if (runif(1) < ratio) {
-            .sigma[j] <- cand.sigma[j]
-            accept.sigma <- accept.sigma + 1
-        } else {
-            cand.sigma[j] <- .sigma[j]
-        }
-    }
-
-    list(beta=.beta,sigma=.sigma,accept.beta=accept.beta,accept.sigma=accept.sigma)
-}
-
 #tmpitr <- 1
 
 # .rho: rho matrix Jxp
@@ -336,9 +270,6 @@ sample.rho <- function(X, Z, .rho, gamma0, tune) {
     n <- nrow(X)
     p <- ncol(X)
     J <- ncol(Z)
-
-    cand.rho <- .rho
-
     # log posteriors of rows of a rho matrix
     # as a vector of length J
     log.post <- function(r) {
@@ -352,7 +283,7 @@ sample.rho <- function(X, Z, .rho, gamma0, tune) {
         }
         exr <- exr1/repmat(rowSums(exr), 1, ncol(exr))
         log.lik <- colSums(log(exr))
-        sum(log.lik + log.pri)
+        log.lik + log.pri
     }
 
     cand.rho <- matrix(0, nrow=nrow(.rho), ncol=ncol(.rho))
@@ -361,20 +292,11 @@ sample.rho <- function(X, Z, .rho, gamma0, tune) {
         cand.rho[j,] <- rmvnorm(1, .rho[j,], tune*diag(ncol(.rho)))
     }
 
+    # vector of ratios, 1xJ
+    ratio <- exp(log.post(cand.rho) - log.post(.rho)) 
 
-    Z <- (Z==1)
     accept <- 0
-    for (j in 2:J) {
-        if (!any(Z[,j])) {
-            next
-        }
-        X.s <- X[Z[,j],]
-
-        cand.rho[j,] <- rmvnorm(1, .rho[j,], tune*diag(ncol(.rho)))
-
-        # vector of ratios, 1xJ
-        ratio <- exp(log.post(cand.rho) - log.post(.rho)) 
-
+    for (j in 2:nrow(.rho)) {
         if (runif(1) < ratio[j]) {
             accept <- accept + 1
             .rho[j,] <- cand.rho[j,] 
