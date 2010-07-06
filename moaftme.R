@@ -70,6 +70,7 @@ moaftme.sampler <- function(t.l, t.u, right.censored, int.censored, X, J, M,
 
         accepts.rho <- accepts.rho + out.rho$accept
         print(sprintf("m: %d, accepts: %d", m, accepts.rho))
+        #browser()
     }
 
     # take into account that for each iteration we sample rho J-1 times
@@ -79,6 +80,7 @@ moaftme.sampler <- function(t.l, t.u, right.censored, int.censored, X, J, M,
          beta.samples=beta.samples,
          rho.samples=rho.samples,
          accepts.rho=accepts.rho)
+
 }
 
 sample.wz <- function(t.l, t.u, .beta, .rho, .sigma, 
@@ -101,6 +103,7 @@ sample.wz <- function(t.l, t.u, .beta, .rho, .sigma,
               Jptr=as.integer(nrow(.beta)),
               w=double(nrow(X)))
     w <- out.w$w
+    print(w)
     
     out.z <- .C("dm_sample_z", 
               w=as.double(w),
@@ -113,6 +116,7 @@ sample.wz <- function(t.l, t.u, .beta, .rho, .sigma,
               Z=integer(nrow(X)))
 
     Z <- out.z$Z
+    print(Z)
 
     list(w=w,Z=Z)
 }
@@ -184,6 +188,7 @@ sample.beta.2 <- function(Y, X, Z) {
 #tmpitr <- 1
 
 sample.rho <- function(X, Z, .rho, gamma0, tune, J) {
+    print(.rho)
     n <- nrow(X)
     p <- ncol(X)
     out  <- .C("dm_sample_rho", 
@@ -191,18 +196,18 @@ sample.rho <- function(X, Z, .rho, gamma0, tune, J) {
               Z=as.integer(Z),
               rho=as.double(.rho),
               gamma0=as.double(gamma0),
-              tune=tune,
+              tune=as.double(tune),
               nptr=as.integer(nrow(X)),
               pptr=as.integer(ncol(X)),
               Jptr=as.integer(J),
               accept=integer(1))
-    .rho <- matrix(out$rho, nrow=J)
+    rho <- matrix(out$rho, nrow=J)
 
-    #exr <- exp(tcrossprod(X, .rho))
-    #xr <- exr/repmat(rowSums(exr), 1, ncol(exr))
-    #matplot(y=exr, type='l')
+    exr <- exp(tcrossprod(X, .rho))
+    xr <- exr/repmat(rowSums(exr), 1, ncol(exr))
+    matplot(y=exr, type='l')
 
-    list(rho=.rho, accept=out$accept)
+    list(rho=rho, accept=out$accept)
 }
 
 # matlab-like
@@ -239,53 +244,13 @@ sim.data <- function(plot=FALSE) {
             X=X)
 }
 
-
-test.sample.w <- function() {
-    n <- 40
-    X <- matrix(0.1, nrow=n)
-    x.i <- X[1,]
-    .beta <- matrix(c(1), nrow=1)
-    .sigma <- matrix(c(.2), nrow=1)
-
-    t. <- seq(0, 2, 0.001) 
-    Z <- matrix(1,nrow=nrow(X))
-
-    # all int censored
-    rc <- rep(0, length(t.))
-    ic <- rep(1, length(t.))
-
-    l <- 1.0
-    u <- 1.4
-    t.l <- matrix(rep(l, nrow(X)), ncol=1)
-    t.u <- matrix(rep(u, nrow(X)), ncol=1)
-    w <- sample.w(t.l, t.u, rc, ic, Z, X, .beta, .sigma) 
-
-    xtb <- x.i*.beta
-    sdlog <- .sigma
-    F. <- plnorm(t., xtb, sdlog)
-    f. <- dlnorm(t., xtb, sdlog)
-
-    plot(t., F., type='l', col="red", xlim=c(0, max(t.)))
-    lines(t., f./2, col="black", lty=4)
-    lines(c(l, l), c(0, 10), col="gray")
-    lines(c(u, u), c(0, 10), col="gray")
-    Fl <- plnorm(l, xtb, sdlog)
-    Fu <- plnorm(u, xtb, sdlog)
-    Fw <- plnorm(w, xtb, sdlog)
-    lines(c(0, max(t.)), c(Fl, Fl), col="green")
-    lines(c(0, max(t.)), c(Fu, Fu), col="blue")
-    points(w, rep(0, length(w)), pch='|')
-    points(rep(0, length(Fw)), Fw, pch='-')
-    #dev.print(device=pdf,"samplew.pdf")
-}
-
 test.sampler.1 <- function() {
     n0 <- 1
     S0 <- diag(100)
     b0 <- 1
     B0 <- 1
     tune <- 0.35
-    M <- 1000
+    M <- 10
     J <- 3
 
     sim <- sim.data()
@@ -351,9 +316,6 @@ if (FALSE) {
 
 }
 
-#test.sample.rho()
-#test.sample.w()
-#test.sample.z()
 #sim.data(TRUE)
 #package.skeleton(name="moaftme", namespace=TRUE)
 out <- test.sampler.1()
