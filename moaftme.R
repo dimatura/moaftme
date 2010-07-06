@@ -46,7 +46,7 @@ moaftme.sampler <- function(t.l, t.u, right.censored, int.censored, X, J, M,
     
     # main loop
     for (m in 2:M) {
-        print(m)
+        #print(m)
 
         out.wz <- sample.wz(t.l, t.u, 
                 beta.samples[m-1,,], 
@@ -58,78 +58,27 @@ moaftme.sampler <- function(t.l, t.u, right.censored, int.censored, X, J, M,
         w <- out.wz$w
         Z <- out.wz$Z
 
-        #w <- sample.w(t.l, t.u, right.censored, int.censored,
-        #        Z.samples[m-1,,],
-        #        X,
-        #        beta.samples[m-1,,],
-        #        sigma.samples[m-1,])
-
-        #Z.samples[m,,] <- sample.z.2(w.samples[m,], X,
-        #        beta.samples[m-1,,], 
-        #        rho.samples[m-1,,],
-        #        sigma.samples[m-1,])
-        
         # sample.beta uses log of time
         Y <- log(w)
-        out <- sample.beta(Y, X, Z, n0, S0, b0, B0, J)
-        beta.samples[m,,] <- out$beta
-        sigma.samples[m,] <- out$sigma
+        out.beta <- sample.beta(Y, X, Z, beta.samples[m-1,,], sigma.samples[m-1,],
+                n0, S0, b0, B0, J)
+        beta.samples[m,,] <- out.beta$beta
+        sigma.samples[m,] <- out.beta$sigma
         
-        #out <- sample.rho(X, Z, rho.samples[m-1,,], gamma0, tune$rho)
-        out <- sample.rho.2(X, Z, rho.samples[m-1,,], gamma0, tune, J)
-        rho.samples[m,,] <- out$rho
+        out.rho <- sample.rho(X, Z, rho.samples[m-1,,], gamma0, tune, J)
+        rho.samples[m,,] <- out.rho$rho
 
-        accepts.rho <- accepts.rho + out$accept
+        accepts.rho <- accepts.rho + out.rho$accept
+        print(sprintf("m: %d, accepts: %d", m, accepts.rho))
     }
 
-    # take into account that for each iteration we sample rho J times
-    accepts.rho <- (accepts.rho*J*100)/m
+    # take into account that for each iteration we sample rho J-1 times
+    accepts.rho <- (accepts.rho*100)/((J-1)*(M-1))
 
     list(sigma.samples=sigma.samples,
          beta.samples=beta.samples,
          rho.samples=rho.samples,
          accepts.rho=accepts.rho)
-}
-
-# return .w, 1xp matrix of pseudo-observations
-sample.w <- function(t.l, t.u, right.censored, int.censored, Z, X,
-        .beta, .sigma) {
-    # convert from 0,1 to T,F
-    Z <- (Z == 1)
-    # by default (no censorship) .w[i] = t.l
-    .w <- t.l
-    for (i in 1:nrow(t.l)) {
-        xtb <- crossprod(X[i,], .beta[Z[i,],])
-        s <- .sigma[Z[i,]]
-        if (int.censored[i]==1) {
-            FlFu <- plnorm(c(t.l[i], t.u[i]), xtb, s)
-            # handle case when Fl and Fu ~ 1
-            if (FlFu[1] > (1-1e-6)) {
-                .w[i] <- runif(1, t.l[i], t.u[i])
-            } else {
-                .w[i] <- qlnorm(runif(1, FlFu[1], FlFu[2]), xtb, s)
-            }
-        } else if (right.censored[i]==1) {
-            Fl <- plnorm(t.l[i], xtb, s)
-            .w[i] <- qlnorm(runif(1, Fl, 1 ), xtb, s)
-            .w[i] <- ifelse(is.infinite(.w[i]), t.l[i], .w[i])
-        }
-        #print(.w[i])
-        if (is.infinite(.w[i])) {
-            print('Infinite')
-        }
-        if (is.nan(.w[i])) {
-            print('nan')
-        }
-        if (is.infinite(.w[i]) || is.nan(.w[i])) {
-            print(.beta[Z[i,],])
-            print(s)
-            print(xtb)
-            print(sprintf("i=%d, Fl=%f, Fu=%f, rc=%d", i, plnorm(t.l[i], xtb, s), plnorm(t.u[i], xtb, s), right.censored[i]))
-        }
- 
-    }
-    .w
 }
 
 sample.wz <- function(t.l, t.u, .beta, .rho, .sigma, 
@@ -168,95 +117,15 @@ sample.wz <- function(t.l, t.u, .beta, .rho, .sigma,
     list(w=w,Z=Z)
 }
  
-dF.i <- function(t.i, x.i, .beta, .rho, .sigma) {
-    .p <- exp(tcrossprod(x.i, .rho))
-    .p <- .p/repmat(rowSums(.p), 1, ncol(.p))
-    tcrossprod(.p,plnorm(t.i, tcrossprod(x.i,.beta) ,.sigma))
-}
-
-# return nxJ matrix Z where Z[i,j]=1 indicates obs. i comes from component j
-sample.z <- function(w, X, .beta, .rho, .sigma) {
-    n <- nrow(X)
-    p <- ncol(X)
-    J <- ncol(.beta)
-
-    # .p: nxj matrix where .p(i,j) = p(x.i, rho.j)
-    #xtr <- tcrossprod(X, .rho)
-    .p <- exp(tcrossprod(X, .rho))
-    .f <- dlnorm(repmat(w, 1, J), tcrossprod(X,.beta), repmat(matrix(.sigma,nrow=1), n, 1))
-
-    # logs to (try to) avoid overflow
-    #.p <- exp(xtr - repmat(log(rowSums(exp(xtr))), 1, nrow(.rho)))
-
-    # .f: nxj matrix where .f(i,j) = .f_j(x.i, .beta.j) 
-    #.f <- dlnorm(repmat(w, 1, ncol(.p)), tcrossprod(X,.beta), repmat(matrix(.sigma,nrow=1), nrow(X), 1))
-    # h: nxj matrix where
-
-    .h <- .f * .p
-
-    if (any(is.nan(.h))) {
-        #print("nan")
-        #print(xtr)
-        ##print(rowSums(exp(xtr)))
-        #print(.p)
-        #print(.f)
-    }
-
-    Z <- matrix(nrow=nrow(X), ncol=nrow(.beta))
-    for (i in 1:nrow(X)) {
-        Z[i,] <- rmultinom(1, 1, .h[i,])
-    }
-
-    if (any(colSums(Z)==0)) {
-        print("Empty z")
-        browser()
-    }
-
-    Z
-}
-
-# return nxJ matrix Z where Z[i,j]=1 indicates obs. i comes from component j
-sample.z.2 <- function(w, X, .beta, .rho, .sigma) {
-    Xrhot <- tcrossprod(X, .rho)
-    Xbetat <- tcrossprod(X, .beta)
-    print ('sameplz')
-    out <- .C("sample_z", 
-              w=as.double(w),
-              Xbetat=as.double(Xbetat),
-              Xrhot=as.double(Xrhot),
-              sigma=as.double(.sigma),
-              nptr=as.integer(nrow(X)),
-              pptr=as.integer(ncol(X)),
-              Jptr=as.integer(nrow(.beta)),
-              Z=integer(nrow(X)))
-      #print (out)
-    h <- matrix(out$h, nrow=nrow(X))
-    h <- h / repmat(rowSums(h), 1, ncol(h))
-    .p <- exp(tcrossprod(X, .rho))
-    .f <- dlnorm(repmat(w, 1, nrow(.beta)), tcrossprod(X,.beta), repmat(matrix(.sigma,nrow=1), nrow(X), 1))
-    .h <- .p * .f
-    .h <- .h / repmat(rowSums(.h), 1, ncol(.h))
-    #browser()
-
-    Z <- matrix(nrow=nrow(X), ncol=nrow(.beta))
-    for (i in 1:nrow(X)) {
-        Z[i,] <- rmultinom(1, 1, h[i,])
-    }
-    Z
-}
-
 # Y: log(w)
 # z: column of memberships for jth component
-sample.beta <- function(Y, X, Z, n0, S0, b0, B0, J) {
+sample.beta <- function(Y, X, Z, .beta, .sigma, n0, S0, b0, B0, J) {
     #J x p
     out.beta <- matrix(NA, nrow=J, ncol=ncol(X))
     #1 x J
     out.sigma <- matrix(NA, nrow=1, ncol=J)
     # note: R uses 1-based indexing, Z is 0-based
     for (j in 0:(J-1)) {
-        #out <- sample.beta.j(Y, X, Z.samples[m,,j], sigma.samples[m-1,j]^2, n0, S0, b0, B0)  
-        #sigma.samples[m,j] <- sqrt(out$sig2j)
-        #beta.samples[m,j,] <- t(out$beta.j)
         X.s <- matrix(X[Z==j,],nrow=sum(Z==j), ncol=ncol(X))
         Y.s <- Y[Z==j]
         n <-nrow(X.s)
@@ -269,16 +138,18 @@ sample.beta <- function(Y, X, Z, n0, S0, b0, B0, J) {
         beta.h <- ginv(XtX) %*% XtY 
         n1 <- n0 + n
 
-        #S2 <- t(Y.s) %*% (diag(n) - X.s %*% ginv(t(X.s)%*% X.s)%*%t(X.s) )%*% Y.s / (n - ncol(X.s))
         S2 <- crossprod(Y.s, (diag(n) - X.s %*% invXtX %*% t(X.s))) %*% Y.s / (n - ncol(X.s))
 
         n1S1 <- n0*S0 + (n-p)*S2[1,1] + t(beta.h - b0) %*% ginv(B0 + invXtX) %*% (beta.h - b0)
-        out.sigma[j+1] <- sqrt(1/rgamma(1, n1/2, n1S1/2))
-        #out.beta[j,] <- t(rmvt(1,B1,n1)) + b1
-        out.beta[j+1,] <- rmvnorm(1, b1, out.sigma[j+1] * B1)
-        if (is.nan(out.sigma[j+1])) {
-            print("Sigma nan")
-            browser()
+        #print(sprintf("n1S1: %f, S2: %f", n1S1, S2))
+
+        if (is.finite(n1S1) && is.finite(S2)) {
+            out.sigma[j+1] <- sqrt(1/rgamma(1, n1/2, n1S1/2))
+            out.beta[j+1,] <- rmvnorm(1, b1, out.sigma[j+1] * B1)
+            #out.beta[j,] <- t(rmvt(1,B1,n1)) + b1
+        } else {
+            out.sigma[j+1] <- .sigma[j+1]
+            out.beta[j+1,] <- .beta[j+1,]
         }
     }
     list(beta=out.beta,sigma=out.sigma)
@@ -307,66 +178,12 @@ sample.beta.2 <- function(Y, X, Z) {
         .beta <- mvrnorm(1, rep(0, ncol(.beta.hat)), vbeta) 
         out.beta[j,] <- .beta.hat + .beta * out.sigma[j]
     }
-    #log.post <- function(.beta) {
-    #    P1 <- X %*% solve(t(X.s) %*% X) %*% t(X)
-    #    -(p+1)/2 * log(n+1) - n/2 * log(t(y) %*% y -n/(n+1) * t(y) %*% P1 %*% y - 1/(n+1) * t(.beta) %*% t(X) %*% P1 %*% X %*% .beta)
-    #}
     list(beta=out.beta, sigma=out.sigma)
 }
 
 #tmpitr <- 1
 
-# .rho: rho matrix Jxp
-# tune: variance of proposal distrib
-#  Z: nxJ membership matrix
-# returns 1
-sample.rho <- function(X, Z, .rho, gamma0, tune) {
-    n <- nrow(X)
-    p <- ncol(X)
-    J <- ncol(Z)
-    # log posteriors of rows of a rho matrix
-    # as a vector of length J
-    log.post <- function(r) {
-        # TODO flatness for log.pri as parameter
-        log.pri <- dmvnorm(r, rep(0, p), gamma0*diag(p),log=TRUE)
-        exr <- exp(tcrossprod(X, r))
-        exr1 <- exr
-        xr <- tcrossprod(X, r)
-        for(j in 1:J) {
-         exr1[,j] <- exp( Z[,j] * xr[,j] )
-        }
-        exr <- exr1/repmat(rowSums(exr), 1, ncol(exr))
-        log.lik <- colSums(log(exr))
-        log.lik + log.pri
-    }
-
-    cand.rho <- matrix(0, nrow=nrow(.rho), ncol=ncol(.rho))
-    # note we leave first row in 0 for identifiablity
-    for (j in 2:nrow(.rho)) {
-        cand.rho[j,] <- rmvnorm(1, .rho[j,], tune*diag(ncol(.rho)))
-    }
-
-    # vector of ratios, 1xJ
-    ratio <- exp(log.post(cand.rho) - log.post(.rho)) 
-
-    accept <- 0
-    for (j in 2:nrow(.rho)) {
-        if (runif(1) < ratio[j]) {
-            accept <- accept + 1
-            .rho[j,] <- cand.rho[j,] 
-        } 
-    }
-
-    exr <- exp(tcrossprod(X, .rho))
-    exr <- exr/repmat(rowSums(exr), 1, ncol(exr))
-    matplot(y=exr, type='l')
-    #dev.print(device=pdf,sprintf("itr%d.pdf", tmpitr))
-    #tmpitr <<- tmpitr + 1
-    #matplot(t(.rho), type='l')
-    list(rho=.rho,accept=accept)
-}
-
-sample.rho.2 <- function(X, Z, .rho, gamma0, tune, J) {
+sample.rho <- function(X, Z, .rho, gamma0, tune, J) {
     n <- nrow(X)
     p <- ncol(X)
     out  <- .C("dm_sample_rho", 
@@ -381,9 +198,9 @@ sample.rho.2 <- function(X, Z, .rho, gamma0, tune, J) {
               accept=integer(1))
     .rho <- matrix(out$rho, nrow=J)
 
-    exr <- exp(tcrossprod(X, .rho))
-    exr <- exr/repmat(rowSums(exr), 1, ncol(exr))
-    matplot(y=exr, type='l')
+    #exr <- exp(tcrossprod(X, .rho))
+    #xr <- exr/repmat(rowSums(exr), 1, ncol(exr))
+    #matplot(y=exr, type='l')
 
     list(rho=.rho, accept=out$accept)
 }
@@ -479,7 +296,6 @@ test.sampler.1 <- function() {
 
     out <- moaftme.sampler(sim$t.l, sim$t.u, rc, ic, X, J, M, 
         n0=1, S0=2, b0=matrix(0,2,1), B0=100*diag(2), tune)
-    #out <- moaftme.MCEM(sim$t.l, sim$t.u, rc, ic, X, J, M)
     out
 }
 
@@ -488,8 +304,8 @@ test.sampler.2 <- function() {
     S0 <- diag(100)
     b0 <- 1
     B0 <- 1
-    tune <- 0.25
-    M <- 400
+    tune <- 0.10
+    M <- 100
     J <- 3
 
     d <- read.table('flourbeetle.txt', header=TRUE)
@@ -503,7 +319,6 @@ test.sampler.2 <- function() {
 
     out <- moaftme.sampler(t.l, t.u, rc, ic, X, J, M, 
            n0=1, S0=2, b0=matrix(0,2,1), B0=100*diag(2), tune)
-    # out <- moaftme.MCEM(t.l, t.u, rc, ic, X, J, M)
     out
 }
 

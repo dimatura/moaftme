@@ -8,30 +8,21 @@
 #define DM_SQR(x) ((x)*(x))
 #define DM_MULTINOM_EPS (1e-10) 
 
-void foo(double *a, double *b, int *lenptr, double *out) {
-    int i;
-    int len = *lenptr;
-    for (int i=0; i < len; ++i) {
-        out[i] = a[i]/b[i];
-    }
-}
-
 // in fortran ordering, N dimensions d_0...d_(N-1), flat.ix = sum_{0,N-1} n_i prod_{0, i-1} d_j
 
-void foo2(double *a, int *dim0, int *dim1, int *dim2) {
+void foo(double *a, int *dim0, int *dim1, int *dim2) {
     int i,j,k;
     Rprintf("%d %d %d\n", *dim0, *dim1, *dim2);
-    /*
     for(i=0; i < (*dim0)*(*dim1)*(*dim2); ++i) {
         double v = a[i];
-        Rprintf("%f\n", v);
+        Rprintf("%f ", v);
     }
-    */
+    Rprintf("\n");
     for (k=0; k < *dim2; ++k) {
         for (j=0; j < *dim1; ++j) {
             for (i=0; i < *dim0; ++i) {
                 double v = a[i + (*dim0)*j + (*dim0)*(*dim1)*k];
-                Rprintf("%f\n", v);
+                Rprintf("%f ", v);
             }
         }
     }
@@ -88,7 +79,7 @@ void dm_sample_z(double *w,
     // This memory is freed by R at end of .C call
     double *sigma2 = (double *) R_alloc(J, sizeof(double));
     double *logw = (double *) R_alloc(n, sizeof(double));
-    Rprintf("n=%d p=%d J=%d\n", n, p, J);
+    //Rprintf("n=%d p=%d J=%d\n", n, p, J);
     for (j=0; j < J; ++j) {
         sigma2[j] = DM_SQR(sigma[j]);
     }
@@ -269,16 +260,21 @@ void dm_sample_rho(double *X,
                                                         n,
                                                         p,
                                                         J);
+
+        double diff =  (log_post_cand_rho - log_post_current_rho);
         double ratio = exp(log_post_cand_rho - log_post_current_rho);
+
+        //Rprintf("cand, curr = %f, %f, diff=%f, ratio=%f\n", log_post_cand_rho, log_post_current_rho, diff, ratio);
         if (runif(0, 1) < ratio) {
             // copy cand_rho into rho
             for (k=0; k < p; ++k) {
                 rho[j + J*k] = cand_rho[k];
             }
+            //Rprintf("accept\n");
             *accept = *accept + 1;
         }
         // else rho stays the same.
     }
-
+    //Rprintf("accepted %d/%d\n", *accept, J-1);
 }
 
