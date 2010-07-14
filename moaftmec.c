@@ -78,7 +78,7 @@ void dm_sample_z(double *w,
         // row sum for hij
         double hi_sum=0;
         // reset hi
-        memset(hi, 0, sizeof(double)*J);
+        // memset(hi, 0, sizeof(double)*J);
         for (j=0; j< J; ++j) {
             hi[j] = (1/(sigma[j]*w[i]))*exp(Xrho[i+n*j]-(0.5/sigma2[j])*DM_SQR(logw[i]-Xbeta[i+n*j]));
             hi_sum += hi[j];
@@ -126,6 +126,7 @@ void dm_sample_w(double *tl,
             // not sure if log helps
             double logFw = log(runif(Fl, Fu));
             w[i] = qlnorm(logFw, xibj, sj, 1, 1);
+            //Rprintf("i %f\n", w[i]);
         } else if (right_censored[i]==1) {
             double Fl = plnorm(tl[i], xibj, sj, 1, 0);
             double logFw = log(runif(Fl, 1));
@@ -134,6 +135,7 @@ void dm_sample_w(double *tl,
             if (!R_FINITE(w[i])) {
                 w[i] = tl[i];
             }
+            //Rprintf("r %f\n", w[i]);
         }
     }
 }

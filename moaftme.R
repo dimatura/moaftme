@@ -46,7 +46,9 @@ moaftme.sampler <- function(t.l, t.u, right.censored, int.censored, X, J, M,
     
     # main loop
     for (m in 2:M) {
-        print(m)
+        if (m %% 20 == 0) {
+            print(m)
+        }
 
         out.wz <- sample.wz(t.l, t.u, 
                 beta.samples[m-1,,], 
@@ -62,11 +64,11 @@ moaftme.sampler <- function(t.l, t.u, right.censored, int.censored, X, J, M,
         Y <- log(w)
         out.beta <- sample.beta(Y, X, Z, beta.samples[m-1,,], sigma.samples[m-1,],
                 n0, S0, b0, B0, J)
+        #out.beta <- sample.beta.2(Y, X, Z, J)
         beta.samples[m,,] <- out.beta$beta
         sigma.samples[m,] <- out.beta$sigma
         
         out.rho <- sample.rho.2(X, Z, rho.samples[m-1,,], gamma0, tune, J)
-        #out.rho <- sample.rho(X, Z, rho.samples[m-1,,], gamma0, tune, J)
         rho.samples[m,,] <- out.rho$rho
 
         accepts.rho <- accepts.rho + out.rho$accept
@@ -173,7 +175,8 @@ sample.beta <- function(Y, X, Z, .beta, .sigma, n0, S0, b0, B0, J) {
     list(beta=out.beta,sigma=out.sigma)
 }
 
-sample.beta.2 <- function(Y, X, Z) {
+sample.beta.2 <- function(Y, X, Z, J) {
+    Z <- index.to.indicator(Z,J)
     #J x p
     out.beta <- matrix(NA, nrow=ncol(Z), ncol=ncol(X))
     #1 x J
@@ -199,8 +202,6 @@ sample.beta.2 <- function(Y, X, Z) {
     list(beta=out.beta, sigma=out.sigma)
 }
 
-#tmpitr <- 1
-
 sample.rho.2 <- function(X, Z, .rho, gamma0, tune, J) {
     #print(.rho)
     n <- nrow(X)
@@ -217,9 +218,10 @@ sample.rho.2 <- function(X, Z, .rho, gamma0, tune, J) {
               accept=integer(1))
     rho <- matrix(out$rho, nrow=J)
 
-    exr <- exp(tcrossprod(X, .rho))
-    exr <- exr/repmat(rowSums(exr), 1, ncol(exr))
-    matplot(y=exr, type='l', ylim=c(0,1))
+    ##PLOT
+    #exr <- exp(tcrossprod(X, .rho))
+    #exr <- exr/repmat(rowSums(exr), 1, ncol(exr))
+    #matplot(y=exr, type='l', ylim=c(0,1))
 
     list(rho=rho, accept=out$accept)
 }
@@ -259,6 +261,21 @@ sim.data <- function(plot=FALSE) {
     t.u <- t.l
     right.censored <- rep(0, n)
     int.censored <- rep(0,n)
+    # censor
+    for (i in 1:n) {
+        r <- runif(1)
+        if (r < 1/3) {
+            # interval
+            t.l[i] <- ifelse(t.l[i]-0.1 < 0, 0, t.l[i] - 0.1)
+            t.u[i] <- t.u[i] + 0.1
+            int.censored[i] <- 1
+        } else if (r < 2/3) {
+            # right
+            t.l[i] <- ifelse(t.l[i]-0.1 < 0, 0, t.l[i] - 0.1)
+            right.censored[i] <- 1
+        }
+        # else no censorship
+    }
     list(t.l=t.l,t.u=t.u,
             right.censored=right.censored,
             int.censored=int.censored,
@@ -274,9 +291,9 @@ test.sampler.1 <- function() {
     S0 <- diag(100)
     b0 <- 1
     B0 <- 1
-    tune <- 0.35
-    M <- 1000
-    J <- 3
+    tune <- 0.30
+    M <- 50000
+    J <- 2
 
     sim <- sim.data()
     X <- cbind(rep(1,nrow(sim$X)), sim$X)
@@ -294,9 +311,9 @@ test.sampler.2 <- function() {
     S0 <- diag(100)
     b0 <- 1
     B0 <- 1
-    tune <- 0.10
-    M <- 100
-    J <- 3
+    tune <- 0.20
+    M <- 100000
+    J <- 2
 
     d <- read.table('flourbeetle.txt', header=TRUE)
 
@@ -331,6 +348,7 @@ if (FALSE) {
     matplot(out$beta[,1,1:2], type='l')
     matplot(out$rho[,1,1:2], type='l')
     matplot(out$rho[,2,1:2], type='l')
+    matplot(out$rho[,3,1:2], type='l')
     acf(out$beta[,1,1:2])
     acf(out$beta[,2,1:2])
     acf(out$rho[,2,1])
@@ -346,6 +364,6 @@ if (FALSE) {
 
 #sim.data(TRUE)
 #package.skeleton(name="moaftme", namespace=TRUE)
-out <- test.sampler.1()
-#out <- test.sampler.2()
+#out <- test.sampler.1()
+out <- test.sampler.2()
 
