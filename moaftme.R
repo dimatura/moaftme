@@ -65,6 +65,7 @@ moaftme.sampler <- function(t.l, t.u, right.censored, int.censored, X, J, M,
         beta.samples[m,,] <- out.beta$beta
         sigma.samples[m,] <- out.beta$sigma
         
+        #out.rho <- sample.rho.2(X, Z, rho.samples[m-1,,], gamma0, tune, J)
         out.rho <- sample.rho(X, Z, rho.samples[m-1,,], gamma0, tune, J)
         rho.samples[m,,] <- out.rho$rho
 
@@ -187,7 +188,7 @@ sample.beta.2 <- function(Y, X, Z) {
 
 #tmpitr <- 1
 
-sample.rho <- function(X, Z, .rho, gamma0, tune, J) {
+sample.rho.2 <- function(X, Z, .rho, gamma0, tune, J) {
     print(.rho)
     n <- nrow(X)
     p <- ncol(X)
@@ -208,6 +209,68 @@ sample.rho <- function(X, Z, .rho, gamma0, tune, J) {
     matplot(y=exr, type='l')
 
     list(rho=rho, accept=out$accept)
+}
+
+indicator.to.index <- function(ind) {
+    wh <- which(ind==1, arr.ind=TRUE)
+    wh[sort(wh[,1],index.return=TRUE)$ix,2]
+}
+
+index.to.indicator <- function(Z,J) {
+    out <- matrix(0, nrow=length(Z), ncol=J)
+    out[cbind(1:nrow(out),Z)] <- 1
+    out
+}
+
+Z <- diag(4)
+
+sample.rho <- function(X, Z, .rho, gamma0, tune, J) {
+    n <- nrow(X)
+    p <- ncol(X)
+
+    Z <- index.to.indicator(Z, J)
+
+    # log posteriors of rows of a rho matrix
+    # as a vector of length J
+    log.post <- function(r) {
+        # TODO flatness for log.pri as parameter
+        log.pri <- dmvnorm(r, rep(0, p), gamma0*diag(p),log=TRUE)
+        exr <- exp(tcrossprod(X, r))
+        exr1 <- exr
+        xr <- tcrossprod(X, r)
+        for(j in 1:J) {
+         exr1[,j] <- exp( Z[,j] * xr[,j] )
+        }
+        exr <- exr1/repmat(rowSums(exr), 1, ncol(exr))
+        log.lik <- colSums(log(exr))
+        log.lik + log.pri
+    }
+
+    cand.rho <- matrix(0, nrow=nrow(.rho), ncol=ncol(.rho))
+    # note we leave first row in 0 for identifiablity
+    for (j in 2:nrow(.rho)) {
+        cand.rho[j,] <- rmvnorm(1, .rho[j,], tune*diag(ncol(.rho)))
+    }
+
+    # vector of ratios, 1xJ
+    ratio <- exp(log.post(cand.rho) - log.post(.rho)) 
+
+    accept <- 0
+    for (j in 2:nrow(.rho)) {
+        if (runif(1) < ratio[j]) {
+            accept <- accept + 1
+            .rho[j,] <- cand.rho[j,] 
+        } 
+    }
+
+    #PLOTRHO
+    exr <- exp(tcrossprod(X, .rho))
+    exr <- exr/repmat(rowSums(exr), 1, ncol(exr))
+    matplot(y=exr, type='l')
+    ##dev.print(device=pdf,sprintf("itr%d.pdf", tmpitr))
+    ##tmpitr <<- tmpitr + 1
+
+    list(rho=.rho,accept=accept)
 }
 
 # matlab-like

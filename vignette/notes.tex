@@ -158,9 +158,15 @@ Note that, if $n_0\rightarrow 0$ and $B_0^{-1} \rightarrow 0$ then the priori is
 
 For the $\mathbf \rho$ parameters a random walk Metropolis-Hastings step is used, due to the non-tractability of the full conditional posterior for this block of parameters.
 
-Observe that, the full conditional posterior distribution for $\rho_j$ given the rest of parameters and observations is given by
+The full conditional posterior distribution for $\rho_j$ given the rest of parameters and observations is given by
+
+%\begin{eqnarray*}
+%\pi (\rho_j| \mathbf \rho_{-j} , \ldots ) &\propto & \prod_{l \in j} \frac{exp(\mathbf x_l \mathbf \rho_j)}{\sum_{j =1}^J exp(\mathbf x_l \mathbf \rho_j)}
+%\end{eqnarray*}
 \begin{eqnarray*}
-\pi (\rho_j| \mathbf \rho_{-j} , \ldots ) &\propto & \prod_{l \in j} \frac{exp(\mathbf x_l \mathbf \rho_j)}{\sum_{j =1}^J exp(\mathbf x_l \mathbf \rho_j)}
+    \pi (\rho_j| \mathbf \rho_{-j} , \ldots ) &\propto& \prod_i^n \prod_l^J (p(x_i, \rho_j) p(w_i | \dots))^{z_{ij}} \\
+    &\propto& \prod_i^n \frac{(\exp(x_i' \rho_j))^{z_{ij}}}{\sum_k \exp(x_i' \rho_k)} \\
+    &=& \left(  \prod_{i: z_{ij}=0} \frac{1}{\sum_k \exp(x_i' \rho_k)} \right) \left( \prod_{i: z_{ij}=1} \frac{\exp(x_i' \rho_j)}{\sum_k \exp(x_i' \rho_k)} \right)
 \end{eqnarray*}
 
 \end{document}
