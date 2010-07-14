@@ -46,7 +46,7 @@ moaftme.sampler <- function(t.l, t.u, right.censored, int.censored, X, J, M,
     
     # main loop
     for (m in 2:M) {
-        #print(m)
+        print(m)
 
         out.wz <- sample.wz(t.l, t.u, 
                 beta.samples[m-1,,], 
@@ -65,12 +65,12 @@ moaftme.sampler <- function(t.l, t.u, right.censored, int.censored, X, J, M,
         beta.samples[m,,] <- out.beta$beta
         sigma.samples[m,] <- out.beta$sigma
         
-        #out.rho <- sample.rho.2(X, Z, rho.samples[m-1,,], gamma0, tune, J)
-        out.rho <- sample.rho(X, Z, rho.samples[m-1,,], gamma0, tune, J)
+        out.rho <- sample.rho.2(X, Z, rho.samples[m-1,,], gamma0, tune, J)
+        #out.rho <- sample.rho(X, Z, rho.samples[m-1,,], gamma0, tune, J)
         rho.samples[m,,] <- out.rho$rho
 
         accepts.rho <- accepts.rho + out.rho$accept
-        print(sprintf("m: %d, accepts: %d", m, accepts.rho))
+        #print(sprintf("m: %d, accepts: %d", m, accepts.rho))
         #browser()
     }
 
@@ -90,34 +90,47 @@ sample.wz <- function(t.l, t.u, .beta, .rho, .sigma,
     Xrho <- tcrossprod(X, .rho)
     Xbeta <- tcrossprod(X, .beta)
 
-    out.w <- .C("dm_sample_w", 
+    #out.w <- .C("dm_sample_w", 
+    #          tl=as.double(t.l),
+    #          tu=as.double(t.u),
+    #          right_censored=as.integer(right.censored),
+    #          int_censored=as.integer(int.censored),
+    #          Z=as.integer(Z),
+    #          Xbeta=as.double(Xbeta),
+    #          Xrho=as.double(Xrho),
+    #          sigma=as.double(.sigma),
+    #          nptr=as.integer(nrow(X)),
+    #          pptr=as.integer(ncol(X)),
+    #          Jptr=as.integer(nrow(.beta)),
+    #          w=double(nrow(X)))
+    #w <- out.w$w
+    ##print(w)
+    #
+    #out.z <- .C("dm_sample_z", 
+    #          w=as.double(w),
+    #          Xbeta=as.double(Xbeta),
+    #          Xrho=as.double(Xrho),
+    #          sigma=as.double(.sigma),
+    #          nptr=as.integer(nrow(X)),
+    #          pptr=as.integer(ncol(X)),
+    #          Jptr=as.integer(nrow(.beta)),
+    #          Z=integer(nrow(X)))
+
+    out <- .C("dm_sample_wz",
               tl=as.double(t.l),
               tu=as.double(t.u),
               right_censored=as.integer(right.censored),
               int_censored=as.integer(int.censored),
-              Z=as.integer(Z),
+              w=double(nrow(X)),
               Xbeta=as.double(Xbeta),
               Xrho=as.double(Xrho),
               sigma=as.double(.sigma),
               nptr=as.integer(nrow(X)),
               pptr=as.integer(ncol(X)),
               Jptr=as.integer(nrow(.beta)),
-              w=double(nrow(X)))
-    w <- out.w$w
-    print(w)
-    
-    out.z <- .C("dm_sample_z", 
-              w=as.double(w),
-              Xbeta=as.double(Xbeta),
-              Xrho=as.double(Xrho),
-              sigma=as.double(.sigma),
-              nptr=as.integer(nrow(X)),
-              pptr=as.integer(ncol(X)),
-              Jptr=as.integer(nrow(.beta)),
-              Z=integer(nrow(X)))
-
-    Z <- out.z$Z
-    print(Z)
+              Z=as.integer(Z))
+    w <- out$w
+    Z <- out$Z
 
     list(w=w,Z=Z)
 }
@@ -178,8 +191,8 @@ sample.beta.2 <- function(Y, X, Z) {
         rate <- fit$df.residual/2 * s2
         vbeta <- vcov(fit)/s2
         out.sigma[j] <- sqrt(1/rgamma(1, shape=shape, rate=rate))
-        print(.beta.hat)
-        print(vbeta)
+        #print(.beta.hat)
+        #print(vbeta)
         .beta <- mvrnorm(1, rep(0, ncol(.beta.hat)), vbeta) 
         out.beta[j,] <- .beta.hat + .beta * out.sigma[j]
     }
@@ -189,7 +202,7 @@ sample.beta.2 <- function(Y, X, Z) {
 #tmpitr <- 1
 
 sample.rho.2 <- function(X, Z, .rho, gamma0, tune, J) {
-    print(.rho)
+    #print(.rho)
     n <- nrow(X)
     p <- ncol(X)
     out  <- .C("dm_sample_rho", 
@@ -205,8 +218,8 @@ sample.rho.2 <- function(X, Z, .rho, gamma0, tune, J) {
     rho <- matrix(out$rho, nrow=J)
 
     exr <- exp(tcrossprod(X, .rho))
-    xr <- exr/repmat(rowSums(exr), 1, ncol(exr))
-    matplot(y=exr, type='l')
+    exr <- exr/repmat(rowSums(exr), 1, ncol(exr))
+    matplot(y=exr, type='l', ylim=c(0,1))
 
     list(rho=rho, accept=out$accept)
 }
@@ -220,57 +233,6 @@ index.to.indicator <- function(Z,J) {
     out <- matrix(0, nrow=length(Z), ncol=J)
     out[cbind(1:nrow(out),Z)] <- 1
     out
-}
-
-Z <- diag(4)
-
-sample.rho <- function(X, Z, .rho, gamma0, tune, J) {
-    n <- nrow(X)
-    p <- ncol(X)
-
-    Z <- index.to.indicator(Z, J)
-
-    # log posteriors of rows of a rho matrix
-    # as a vector of length J
-    log.post <- function(r) {
-        # TODO flatness for log.pri as parameter
-        log.pri <- dmvnorm(r, rep(0, p), gamma0*diag(p),log=TRUE)
-        exr <- exp(tcrossprod(X, r))
-        exr1 <- exr
-        xr <- tcrossprod(X, r)
-        for(j in 1:J) {
-         exr1[,j] <- exp( Z[,j] * xr[,j] )
-        }
-        exr <- exr1/repmat(rowSums(exr), 1, ncol(exr))
-        log.lik <- colSums(log(exr))
-        log.lik + log.pri
-    }
-
-    cand.rho <- matrix(0, nrow=nrow(.rho), ncol=ncol(.rho))
-    # note we leave first row in 0 for identifiablity
-    for (j in 2:nrow(.rho)) {
-        cand.rho[j,] <- rmvnorm(1, .rho[j,], tune*diag(ncol(.rho)))
-    }
-
-    # vector of ratios, 1xJ
-    ratio <- exp(log.post(cand.rho) - log.post(.rho)) 
-
-    accept <- 0
-    for (j in 2:nrow(.rho)) {
-        if (runif(1) < ratio[j]) {
-            accept <- accept + 1
-            .rho[j,] <- cand.rho[j,] 
-        } 
-    }
-
-    #PLOTRHO
-    exr <- exp(tcrossprod(X, .rho))
-    exr <- exr/repmat(rowSums(exr), 1, ncol(exr))
-    matplot(y=exr, type='l')
-    ##dev.print(device=pdf,sprintf("itr%d.pdf", tmpitr))
-    ##tmpitr <<- tmpitr + 1
-
-    list(rho=.rho,accept=accept)
 }
 
 # matlab-like
@@ -313,7 +275,7 @@ test.sampler.1 <- function() {
     b0 <- 1
     B0 <- 1
     tune <- 0.35
-    M <- 10
+    M <- 1000
     J <- 3
 
     sim <- sim.data()
@@ -354,8 +316,11 @@ if (FALSE) {
     ts.plot(out$beta[,1,1])
     plot(density(out$beta[,1,1]))
     ts.plot(out$beta[,1,2])
+    plot(density(out$beta[,1,2]))
     ts.plot(out$beta[,2,1])
+    plot(density(out$beta[,2,1]))
     ts.plot(out$beta[,2,2])
+    plot(density(out$beta[,2,2]))
     ts.plot(out$sigma[,1])
     plot(density(out$sigma[,1]))
     ts.plot(out$sigma[,1])
