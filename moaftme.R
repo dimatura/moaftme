@@ -46,7 +46,7 @@ moaftme.sampler <- function(t.l, t.u, right.censored, int.censored, X, J, M,
     
     # main loop
     for (m in 2:M) {
-        if (m %% 20 == 0) {
+        if (m %% 1 == 0) {
             print(m)
         }
 
@@ -62,18 +62,16 @@ moaftme.sampler <- function(t.l, t.u, right.censored, int.censored, X, J, M,
 
         # sample.beta uses log of time
         Y <- log(w)
-        out.beta <- sample.beta(Y, X, Z, beta.samples[m-1,,], sigma.samples[m-1,],
-                n0, S0, b0, B0, J)
-        #out.beta <- sample.beta.2(Y, X, Z, J)
+        #out.beta <- sample.beta(Y, X, Z, beta.samples[m-1,,], sigma.samples[m-1,], n0, S0, b0, B0, J)
+        out.beta <- sample.beta.sigma(Y, X, Z, beta.samples[m-1,,], sigma.samples[m-1,], n0, S0, b0, B0, J)
         beta.samples[m,,] <- out.beta$beta
         sigma.samples[m,] <- out.beta$sigma
         
-        out.rho <- sample.rho.2(X, Z, rho.samples[m-1,,], gamma0, tune, J)
+        out.rho <- sample.rho(X, Z, rho.samples[m-1,,], gamma0, tune, J)
         rho.samples[m,,] <- out.rho$rho
 
         accepts.rho <- accepts.rho + out.rho$accept
         #print(sprintf("m: %d, accepts: %d", m, accepts.rho))
-        #browser()
     }
 
     # take into account that for each iteration we sample rho J-1 times
@@ -91,32 +89,6 @@ sample.wz <- function(t.l, t.u, .beta, .rho, .sigma,
 
     Xrho <- tcrossprod(X, .rho)
     Xbeta <- tcrossprod(X, .beta)
-
-    #out.w <- .C("dm_sample_w", 
-    #          tl=as.double(t.l),
-    #          tu=as.double(t.u),
-    #          right_censored=as.integer(right.censored),
-    #          int_censored=as.integer(int.censored),
-    #          Z=as.integer(Z),
-    #          Xbeta=as.double(Xbeta),
-    #          Xrho=as.double(Xrho),
-    #          sigma=as.double(.sigma),
-    #          nptr=as.integer(nrow(X)),
-    #          pptr=as.integer(ncol(X)),
-    #          Jptr=as.integer(nrow(.beta)),
-    #          w=double(nrow(X)))
-    #w <- out.w$w
-    ##print(w)
-    #
-    #out.z <- .C("dm_sample_z", 
-    #          w=as.double(w),
-    #          Xbeta=as.double(Xbeta),
-    #          Xrho=as.double(Xrho),
-    #          sigma=as.double(.sigma),
-    #          nptr=as.integer(nrow(X)),
-    #          pptr=as.integer(ncol(X)),
-    #          Jptr=as.integer(nrow(.beta)),
-    #          Z=integer(nrow(X)))
 
     out <- .C("dm_sample_wz",
               tl=as.double(t.l),
@@ -166,7 +138,6 @@ sample.beta <- function(Y, X, Z, .beta, .sigma, n0, S0, b0, B0, J) {
         if (is.finite(n1S1) && is.finite(S2)) {
             out.sigma[j+1] <- sqrt(1/rgamma(1, n1/2, n1S1/2))
             out.beta[j+1,] <- rmvnorm(1, b1, out.sigma[j+1] * B1)
-            #out.beta[j,] <- t(rmvt(1,B1,n1)) + b1
         } else {
             out.sigma[j+1] <- .sigma[j+1]
             out.beta[j+1,] <- .beta[j+1,]
@@ -175,34 +146,53 @@ sample.beta <- function(Y, X, Z, .beta, .sigma, n0, S0, b0, B0, J) {
     list(beta=out.beta,sigma=out.sigma)
 }
 
-sample.beta.2 <- function(Y, X, Z, J) {
-    Z <- index.to.indicator(Z,J)
+sample.beta.sigma <- function(Y, X, Z, .beta, .sigma, n0, S0, b0, B0, J) {
+    # TODO fix the t()
+    .beta <- t(.beta)
+    b0 <- t(b0)
     #J x p
-    out.beta <- matrix(NA, nrow=ncol(Z), ncol=ncol(X))
+    out.beta <- matrix(NA, nrow=J, ncol=ncol(X))
     #1 x J
-    out.sigma <- matrix(NA, nrow=1, ncol=ncol(Z))
+    .p <- ncol(X)
+    out.sigma <- matrix(NA, nrow=1, ncol=J)
+    for (j in 0:(J-1)) {
+        X.j <- matrix(X[Z==j,],ncol=.p)
+        Y.j <- Y[Z==j]
+        XtX <- crossprod(X.j)
+        XtY <- crossprod(X.j, Y.j)
+        .beta.j <- .beta[,j+1]
 
-    # 0,1 -> T,F for indexing
-    Z <- (Z==1)
-    for (j in 1:nrow(out.beta)) {
-        X.s <- X[Z[,j],]
-        Y.s <- matrix(Y[Z[,j]],ncol=1)
-        fit = lm(Y.s ~ 0 + X.s)
-        .beta.hat <- matrix(fit$coef, c(1, fit$rank))
-        s2 <- sum(fit$residuals^2)/fit$df.residual
-        shape <- fit$df.residual/2
-        rate <- fit$df.residual/2 * s2
-        vbeta <- vcov(fit)/s2
-        out.sigma[j] <- sqrt(1/rgamma(1, shape=shape, rate=rate))
-        #print(.beta.hat)
-        #print(vbeta)
-        .beta <- mvrnorm(1, rep(0, ncol(.beta.hat)), vbeta) 
-        out.beta[j,] <- .beta.hat + .beta * out.sigma[j]
+        # sample sigma2
+        err <- sum((X.j %*% (-.beta.j) + Y.j)^2)
+        c.post <- (n0 + nrow(X.j))*0.5
+        d.post <- (S0 + err)*0.5
+        # inverse gamma
+        sigma2.t <- 1./rgamma(1, shape=c.post, rate=d.post)
+
+        # sample beta, given sigma2
+        sigma2.inv <- 1/sigma2.t
+        sig.beta <- solve(B0 + XtX * sigma2.inv)
+        .C <- chol(sig.beta)
+        beta.hat <- sig.beta %*% (B0 %*% b0 + (XtY * sigma2.inv))
+        beta.t <- (.C %*% rnorm(.p, 0, 1)) + beta.hat
+
+        #print(.beta, .sigma)
+        #print(beta.t, sigma2.t)
+
+        #if (all(is.finite(beta.t)) && is.finite(sigma2.t)) {
+            out.sigma[j+1] <- sqrt(sigma2.t)
+        #    # TODO fix t()
+            out.beta[j+1,] <- t(beta.t)
+        #} else {
+        #    out.sigma[j+1] <- .sigma[j+1]
+        #    # TODO fix t()
+        #    out.beta[j+1,] <- t(.beta[j+1,])
+        #}
     }
-    list(beta=out.beta, sigma=out.sigma)
+    list(beta=out.beta,sigma=out.sigma)
 }
 
-sample.rho.2 <- function(X, Z, .rho, gamma0, tune, J) {
+sample.rho <- function(X, Z, .rho, gamma0, tune, J) {
     #print(.rho)
     n <- nrow(X)
     p <- ncol(X)
@@ -219,9 +209,9 @@ sample.rho.2 <- function(X, Z, .rho, gamma0, tune, J) {
     rho <- matrix(out$rho, nrow=J)
 
     ##PLOT
-    #exr <- exp(tcrossprod(X, .rho))
-    #exr <- exr/repmat(rowSums(exr), 1, ncol(exr))
-    #matplot(y=exr, type='l', ylim=c(0,1))
+    exr <- exp(tcrossprod(X, .rho))
+    exr <- exr/repmat(rowSums(exr), 1, ncol(exr))
+    matplot(y=exr, type='l', ylim=c(0,1))
 
     list(rho=rho, accept=out$accept)
 }
@@ -287,12 +277,14 @@ sim.data <- function(plot=FALSE) {
 }
 
 test.sampler.1 <- function() {
-    n0 <- 1
-    S0 <- diag(100)
-    b0 <- 1
-    B0 <- 1
-    tune <- 0.30
-    M <- 50000
+    n0 <- 0.01
+    #S0 <- .5 
+    S0 <- 0.01
+    b0 <- matrix(0, nrow=1, ncol=2)
+    #B0 <- diag(1, 2)
+    B0 <- diag(0.01, 2)
+    tune <- 0.10
+    M <- 1000
     J <- 2
 
     sim <- sim.data()
@@ -302,15 +294,17 @@ test.sampler.1 <- function() {
     ic <- sim$int.censored
 
     out <- moaftme.sampler(sim$t.l, sim$t.u, rc, ic, X, J, M, 
-        n0=1, S0=2, b0=matrix(0,2,1), B0=100*diag(2), tune)
+        n0=n0, S0=S0, b0=b0, B0=B0, tune)
     out
 }
 
 test.sampler.2 <- function() {
-    n0 <- 1
-    S0 <- diag(100)
+    n0 <- 0.001
+    #S0 <- diag(100)
+    S0 <- 0.001
     b0 <- 1
-    B0 <- 1
+    #B0 <- 1
+    B0 <- diag(0.01, 2)
     tune <- 0.20
     M <- 100000
     J <- 2
@@ -364,6 +358,6 @@ if (FALSE) {
 
 #sim.data(TRUE)
 #package.skeleton(name="moaftme", namespace=TRUE)
-#out <- test.sampler.1()
-out <- test.sampler.2()
+out <- test.sampler.1()
+#out <- test.sampler.2()
 

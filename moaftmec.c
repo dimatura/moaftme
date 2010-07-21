@@ -78,7 +78,6 @@ void dm_sample_z(double *w,
         // row sum for hij
         double hi_sum=0;
         // reset hi
-        // memset(hi, 0, sizeof(double)*J);
         for (j=0; j< J; ++j) {
             hi[j] = (1/(sigma[j]*w[i]))*exp(Xrho[i+n*j]-(0.5/sigma2[j])*DM_SQR(logw[i]-Xbeta[i+n*j]));
             hi_sum += hi[j];
@@ -192,22 +191,25 @@ double dm_log_post_rho_j(int j,
             log_lik += xr;
         }
         // calculating sum_l(exp(x_i rho)))
-        double sum_exp_xrl = 0;
+        // TODO
+        // See numerical recipes on EM; use 'log-sum-exp' formula
+        // log(sum(exp(z_i))) = z_max + log(sum(exp(z_i-z_max)))
+        // guarantee at least on exp won't overflow, and those
+        // that do could be neglected anyway.
+        // Note that when z_i == z_max, exp(z_i-z_max) = 1
+        // therefore the calculation will be
+        // z_max + log(1 + sum_{z_i != z_max}(exp(z_i-z_max)))
+        double sum_exp_xrl = exp(xr);
         for (l = 0; l < J; ++l) {
-            if (l==j) {
-                // this is the new one
-                sum_exp_xrl += exp(xr);
-            } else { 
-                double xrl = 0;
-                for (k=0; k < p; ++k) {
-                    xrl += (X[i + n*k] * rho[l + J*k]);
-                }
-                sum_exp_xrl += exp(xrl);
+            if (l==j) { continue; }
+            double xrl = 0;
+            for (k=0; k < p; ++k) {
+                xrl += (X[i + n*k] * rho[l + J*k]);
             }
+            sum_exp_xrl += exp(xrl);
         }
         log_lik -= log(sum_exp_xrl);
     }
-    // log post = log lik + log pri
     return (log_pri + log_lik);
 }
 
@@ -227,8 +229,6 @@ void dm_sample_rho(double *X,
     int i, j, k;
 
     //Rprintf("n=%d p=%d J=%d\n", n, p, J);
-    //Rprintf("gamma0: %f, tune: %f\n", *gamma0, *tune);
-
     // for each j
     //    generate candidate rho_j
     //    evaluate logpost(rho_j candidate) 
@@ -243,7 +243,6 @@ void dm_sample_rho(double *X,
         // generate candidate rho_j
         for (k=0; k < p; ++k) {
             cand_rho[k] = rnorm(rho[j + J*k], *tune);
-            //Rprintf("new old %f %f\n", cand_rho[k], rho[j + J*k]);
         }
 
         double log_post_cand_rho = dm_log_post_rho_j(j,
@@ -255,7 +254,7 @@ void dm_sample_rho(double *X,
                                                      n,
                                                      p,
                                                      J);
-        // extract current rho_j; this is inefficient
+        // a copy of current rho_j
         for (k=0; k < p; ++k) {
             current_rho[k] = rho[j + J*k];
         }
@@ -270,20 +269,16 @@ void dm_sample_rho(double *X,
                                                         p,
                                                         J);
 
-        double diff = (log_post_cand_rho - log_post_current_rho);
         double ratio = exp(log_post_cand_rho - log_post_current_rho);
 
-        //Rprintf("cand, curr = %f, %f, diff=%f, ratio=%f\n", log_post_cand_rho, log_post_current_rho, diff, ratio);
         if (runif(0, 1) < ratio) {
             // copy cand_rho into rho
             for (k=0; k < p; ++k) {
                 rho[j + J*k] = cand_rho[k];
             }
-            //Rprintf("accept\n");
             *accept = *accept + 1;
         }
         // else rho stays the same.
     }
-    //Rprintf("accepted %d/%d\n", *accept, J-1);
 }
 
