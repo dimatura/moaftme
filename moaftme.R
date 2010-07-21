@@ -21,8 +21,10 @@ moaftme.sampler <- function(t.l, t.u, right.censored, int.censored, X, J, M,
     n <- nrow(X)
     p <- ncol(X)
 
+    invB0 <- solve(B0)
+
     w <- rep(NA, n)
-    # we 0:(J-1) for use with C indexing
+    # 0:(J-1) for use with C indexing
     Z <- sample(0:(J-1), size=n, replace=TRUE)
 
     sigma.samples <- matrix(nrow=M, ncol=J)
@@ -46,7 +48,7 @@ moaftme.sampler <- function(t.l, t.u, right.censored, int.censored, X, J, M,
     
     # main loop
     for (m in 2:M) {
-        if (m %% 1 == 0) {
+        if (m %% 20 == 0) {
             print(m)
         }
 
@@ -62,8 +64,7 @@ moaftme.sampler <- function(t.l, t.u, right.censored, int.censored, X, J, M,
 
         # sample.beta uses log of time
         Y <- log(w)
-        #out.beta <- sample.beta(Y, X, Z, beta.samples[m-1,,], sigma.samples[m-1,], n0, S0, b0, B0, J)
-        out.beta <- sample.beta.sigma(Y, X, Z, beta.samples[m-1,,], sigma.samples[m-1,], n0, S0, b0, B0, J)
+        out.beta <- sample.beta.sigma(Y, X, Z, beta.samples[m-1,,], sigma.samples[m-1,], n0, S0, b0, B0, invB0, J)
         beta.samples[m,,] <- out.beta$beta
         sigma.samples[m,] <- out.beta$sigma
         
@@ -108,45 +109,8 @@ sample.wz <- function(t.l, t.u, .beta, .rho, .sigma,
 
     list(w=w,Z=Z)
 }
- 
-# Y: log(w)
-# z: column of memberships for jth component
-sample.beta <- function(Y, X, Z, .beta, .sigma, n0, S0, b0, B0, J) {
-    #J x p
-    out.beta <- matrix(NA, nrow=J, ncol=ncol(X))
-    #1 x J
-    out.sigma <- matrix(NA, nrow=1, ncol=J)
-    # note: R uses 1-based indexing, Z is 0-based
-    for (j in 0:(J-1)) {
-        X.s <- matrix(X[Z==j,],nrow=sum(Z==j), ncol=ncol(X))
-        Y.s <- Y[Z==j]
-        n <-nrow(X.s)
-        p <- ncol(X.s)
-        XtX <- crossprod(X.s)
-        invXtX <- ginv(XtX)
-        XtY <- crossprod(X.s, Y.s)
-        B1 <- ginv(ginv(B0) + XtX)
-        b1 <- B1 %*% (ginv(B0) %*% b0 + XtY)
-        beta.h <- ginv(XtX) %*% XtY 
-        n1 <- n0 + n
 
-        S2 <- crossprod(Y.s, (diag(n) - X.s %*% invXtX %*% t(X.s))) %*% Y.s / (n - ncol(X.s))
-
-        n1S1 <- n0*S0 + (n-p)*S2[1,1] + t(beta.h - b0) %*% ginv(B0 + invXtX) %*% (beta.h - b0)
-        #print(sprintf("n1S1: %f, S2: %f", n1S1, S2))
-
-        if (is.finite(n1S1) && is.finite(S2)) {
-            out.sigma[j+1] <- sqrt(1/rgamma(1, n1/2, n1S1/2))
-            out.beta[j+1,] <- rmvnorm(1, b1, out.sigma[j+1] * B1)
-        } else {
-            out.sigma[j+1] <- .sigma[j+1]
-            out.beta[j+1,] <- .beta[j+1,]
-        }
-    }
-    list(beta=out.beta,sigma=out.sigma)
-}
-
-sample.beta.sigma <- function(Y, X, Z, .beta, .sigma, n0, S0, b0, B0, J) {
+sample.beta.sigma <- function(Y, X, Z, .beta, .sigma, n0, S0, b0, B0, invB0, J) {
     # TODO fix the t()
     .beta <- t(.beta)
     b0 <- t(b0)
@@ -176,18 +140,19 @@ sample.beta.sigma <- function(Y, X, Z, .beta, .sigma, n0, S0, b0, B0, J) {
         beta.hat <- sig.beta %*% (B0 %*% b0 + (XtY * sigma2.inv))
         beta.t <- (.C %*% rnorm(.p, 0, 1)) + beta.hat
 
-        #print(.beta, .sigma)
-        #print(beta.t, sigma2.t)
-
-        #if (all(is.finite(beta.t)) && is.finite(sigma2.t)) {
+        if (all(is.finite(beta.t)) && is.finite(sigma2.t)) {
             out.sigma[j+1] <- sqrt(sigma2.t)
-        #    # TODO fix t()
+            # TODO fix t()
             out.beta[j+1,] <- t(beta.t)
-        #} else {
-        #    out.sigma[j+1] <- .sigma[j+1]
-        #    # TODO fix t()
-        #    out.beta[j+1,] <- t(.beta[j+1,])
-        #}
+        } else {
+            # too few points assigned to expert -- sample from prior
+            print('pri sample')
+            #out.sigma[j+1] <- sqrt(1./rgamma(1., shape=n0*.5, rate=S0*.5))
+            out.sigma[j+1] <- .sigma[j+1]
+            # TODO fix t()
+            #out.beta[j+1,] <- t(.beta[j+1,])
+            out.beta[j+1,] <- rmvnorm(1, b0, invB0)
+        }
     }
     list(beta=out.beta,sigma=out.sigma)
 }
@@ -209,9 +174,9 @@ sample.rho <- function(X, Z, .rho, gamma0, tune, J) {
     rho <- matrix(out$rho, nrow=J)
 
     ##PLOT
-    exr <- exp(tcrossprod(X, .rho))
-    exr <- exr/repmat(rowSums(exr), 1, ncol(exr))
-    matplot(y=exr, type='l', ylim=c(0,1))
+    #exr <- exp(tcrossprod(X, .rho))
+    #exr <- exr/repmat(rowSums(exr), 1, ncol(exr))
+    #matplot(y=exr, type='l', ylim=c(0,1))
 
     list(rho=rho, accept=out$accept)
 }
@@ -278,13 +243,11 @@ sim.data <- function(plot=FALSE) {
 
 test.sampler.1 <- function() {
     n0 <- 0.01
-    #S0 <- .5 
     S0 <- 0.01
     b0 <- matrix(0, nrow=1, ncol=2)
-    #B0 <- diag(1, 2)
     B0 <- diag(0.01, 2)
     tune <- 0.10
-    M <- 1000
+    M <- 10000
     J <- 2
 
     sim <- sim.data()
@@ -299,13 +262,11 @@ test.sampler.1 <- function() {
 }
 
 test.sampler.2 <- function() {
-    n0 <- 0.001
-    #S0 <- diag(100)
-    S0 <- 0.001
-    b0 <- 1
-    #B0 <- 1
+    n0 <- 0.01
+    S0 <- 0.01
+    b0 <- matrix(0, nrow=1, ncol=2)
     B0 <- diag(0.01, 2)
-    tune <- 0.20
+    tune <- 4.5
     M <- 100000
     J <- 2
 
@@ -319,7 +280,7 @@ test.sampler.2 <- function() {
     t.u <- matrix(d$t.u,ncol=1)
 
     out <- moaftme.sampler(t.l, t.u, rc, ic, X, J, M, 
-           n0=1, S0=2, b0=matrix(0,2,1), B0=100*diag(2), tune)
+        n0=n0, S0=S0, b0=b0, B0=B0, tune)
     out
 }
 
@@ -333,10 +294,10 @@ if (FALSE) {
     ts.plot(out$beta[,2,2])
     plot(density(out$beta[,2,2]))
     ts.plot(out$sigma[,1])
-    plot(density(out$sigma[,1]))
-    ts.plot(out$sigma[,1])
     ts.plot(out$sigma[,2])
+    plot(density(out$sigma[,1]))
     ts.plot(out$rho[,2,1])
+    ts.plot(out$rho[,2,2])
     ts.plot(out$rho[,3,1])
     matplot(cbind(out$beta[,1,1], 10*out$sigma[,1]), type='l')
     matplot(out$beta[,1,1:2], type='l')
