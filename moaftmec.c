@@ -5,42 +5,34 @@
 
 #include <string.h>
 
-#define DM_SQR(x) ((x)*(x))
-#define DM_MULTINOM_EPS (1e-10) 
+#define MOAFTME_MULTINOM_EPS (1e-10) 
 
-// in fortran ordering, N dimensions d_0...d_(N-1), flat.ix = sum_{0,N-1} n_i prod_{0, i-1} d_j
+static R_INLINE double moaftme_sqr(double x) {
+    return x*x;
+}
 
-void foo(double *a, int *dim0, int *dim1, int *dim2) {
-    int i,j,k;
-    Rprintf("%d %d %d\n", *dim0, *dim1, *dim2);
-    for(i=0; i < (*dim0)*(*dim1)*(*dim2); ++i) {
-        double v = a[i];
-        Rprintf("%f ", v);
-    }
-    Rprintf("\n");
-    for (k=0; k < *dim2; ++k) {
-        for (j=0; j < *dim1; ++j) {
-            for (i=0; i < *dim0; ++i) {
-                double v = a[i + (*dim0)*j + (*dim0)*(*dim1)*k];
-                Rprintf("%f ", v);
-            }
-        }
-    }
+static R_INLINE double moaftme_min(double x, double y) {
+    return (x < y)? x : y;
+}
+
+static R_INLINE double moaftme_max(double x, double y) {
+    return (x > y)? x : y;
 }
 
 // weighted random choice from [0,J)
-int dm_rmultinom(double *weights, double sum_weights, int J) {
+int moaftme_rmultinom(double *weights,
+        double sum_weights,
+        int J) {
     double r;
     int j;
-    //Rprintf("sum weight: %f, J: %d\n", sum_weights, J);
-    if (sum_weights < DM_MULTINOM_EPS) {
+    if (sum_weights < MOAFTME_MULTINOM_EPS) {
         // simply assume equiprobability
         for (j=0; j < J; ++j) {
             weights[j] = 1;
         }
         sum_weights = J;
     }
-    r = runif(0, sum_weights);
+    r = runif(0., sum_weights);
     for (j=0; j < J; ++j) {
         r -= weights[j];
         if (r < 0) {
@@ -50,7 +42,7 @@ int dm_rmultinom(double *weights, double sum_weights, int J) {
     return J-1;
 }
 
-void dm_sample_z(double *w,
+void moaftme_sample_z(double *w,
                  double *Xbeta,
                  double *Xrho,
                  double *sigma,
@@ -62,16 +54,6 @@ void dm_sample_z(double *w,
     int p = *pptr;
     int J = *Jptr;
     int i, j, k;
-    // This memory is freed by R at end of .C call
-    double *sigma2 = (double *) R_alloc(J, sizeof(double));
-    double *logw = (double *) R_alloc(n, sizeof(double));
-    //Rprintf("n=%d p=%d J=%d\n", n, p, J);
-    for (j=0; j < J; ++j) {
-        sigma2[j] = DM_SQR(sigma[j]);
-    }
-    for (i=0; i < n; ++i) {
-        logw[i] = log(w[i]);
-    }
     // unnormalized row of hij
     double *hi = (double *) R_alloc(J, sizeof(double));
     for (i=0; i < n; ++i) {
@@ -79,20 +61,66 @@ void dm_sample_z(double *w,
         double hi_sum=0;
         // reset hi
         for (j=0; j< J; ++j) {
-            hi[j] = (1/(sigma[j]*w[i]))*exp(Xrho[i+n*j]-(0.5/sigma2[j])*DM_SQR(logw[i]-Xbeta[i+n*j]));
+            hi[j] = (1./(sigma[j]*w[i]))*exp(Xrho[i+n*j]
+                    -(0.5/moaftme_sqr(sigma[j]))
+                    *moaftme_sqr(log(w[i])-Xbeta[i+n*j]));
             hi_sum += hi[j];
         }
-        Z[i] = dm_rmultinom(hi, hi_sum, J);
+        Z[i] = moaftme_rmultinom(hi, hi_sum, J);
     }
 }
 
-void dm_sample_w(double *tl,
+double moaftme_sample_int_censored(double tl,
+        double tu,
+        double mean,
+        double sigma) {
+    //plnorm args: x, mean, sigma, lowertail=TRUE, log=FALSE
+    double Fl = plnorm(tl, mean, sigma, 1, 0);
+    if (Fl > (1 - 1e-8)) {
+        // tl is very large and both f(tl) and f(tu) are very small.
+        // qlnorm would return Inf. We sample uniformly from [tl, tu]. 
+        return runif(tl, tu);
+    }
+    double Fu = plnorm(tu, mean, sigma, 1, 0);
+    double Fw = runif(Fl, Fu);
+    return qlnorm(Fw, mean, sigma, 1, 0);
+    //Rprintf("i %f\n", w[i]);
+}
+
+double moaftme_sample_right_censored(double tl,
+        double mean,
+        double sigma) {
+    double Fl = plnorm(tl, mean, sigma, 1, 0);
+    double Fw = runif(Fl, 1);
+    double w = qlnorm(Fw, mean, sigma, 1, 0);
+    // deal with case when lognorm is degenerate (eg very large sigma)
+    if (!R_FINITE(w)) {
+        return tl;
+    }
+    return w;
+}
+
+void moaftme_sample_w_from_R(double *tl,
+        double *tu,
+        int *right_censored,
+        double *mean,
+        double *sigma,
+        double *out) {
+    GetRNGstate();
+    if (*right_censored==1) {
+        *out = moaftme_sample_right_censored(*tl, *mean, *sigma);
+    } else {
+        *out = moaftme_sample_int_censored(*tl, *tu, *mean, *sigma);
+    }
+    PutRNGstate();
+}
+
+void moaftme_sample_w(double *tl,
                  double *tu,
                  int *right_censored,
                  int *int_censored,
                  int *Z,
                  double *Xbeta,
-                 double *Xrho,
                  double *sigma,
                  int *nptr, 
                  int *pptr,
@@ -110,37 +138,21 @@ void dm_sample_w(double *tl,
             continue;
         }
         double sj = sigma[Z[i]];
-        // Xbeta and Xrho come in Fortran order 
         double xibj = Xbeta[i + Z[i]*n];
-        double xirj = Xrho[i + Z[i]*n];
         if (int_censored[i]==1) {
-            //plnorm args: x, mean, sigma, lowertail=TRUE, log=FALSE
-            double Fl = plnorm(tl[i], xibj, sj, 1, 0);
-            if (Fl > (1 - 1e-8)) {
-                // tl is very large and both f(tl) and f(tu) are very small.
-                // qlnorm would return Inf. We sample uniformly from [tl, tu]. 
-                w[i] = runif(tl[i], tu[i]);
-            }
-            double Fu = plnorm(tu[i], xibj, sj, 1, 0);
-            // not sure if log helps
-            double logFw = log(runif(Fl, Fu));
-            w[i] = qlnorm(logFw, xibj, sj, 1, 1);
-            //Rprintf("i %f\n", w[i]);
+            w[i] = moaftme_sample_int_censored(tl[i], 
+                    tu[i],
+                    xibj,
+                    sj);
         } else if (right_censored[i]==1) {
-            double Fl = plnorm(tl[i], xibj, sj, 1, 0);
-            double logFw = log(runif(Fl, 1));
-            w[i] = qlnorm(logFw, xibj, sj, 1, 1);
-            // deal with case when lognorm is degenerate (eg very large sigma)
-            if (!R_FINITE(w[i])) {
-                w[i] = tl[i];
-            }
-            //Rprintf("r %f\n", w[i]);
+            w[i] = moaftme_sample_right_censored(tl[i],
+                    xibj,
+                    sj);
         }
     }
 }
 
-void dm_sample_wz(
-        double *tl,
+void moaftme_sample_wz(double *tl,
         double *tu,
         int *right_censored,
         int *int_censored,
@@ -153,23 +165,24 @@ void dm_sample_wz(
         int *Jptr,
         int *Z
         ) {
-    dm_sample_w(tl, tu, right_censored, int_censored,
-            Z, Xbeta, Xrho, sigma, nptr, pptr, Jptr, w);
-    dm_sample_z(w, Xbeta, Xrho, sigma,
+    GetRNGstate();
+    moaftme_sample_w(tl, tu, right_censored, int_censored,
+            Z, Xbeta, sigma, nptr, pptr, Jptr, w);
+    moaftme_sample_z(w, Xbeta, Xrho, sigma,
             nptr, pptr, Jptr, Z);
-
+    PutRNGstate();
 }
 
-double dm_log_post_rho_j(int j,
-                     double *rho_j,
-                     double *rho,
-                     double *X, 
-                     int *Z, 
-                     double *gamma0,
-                     int n,
-                     int p,
-                     int J
-                     ) {
+double moaftme_log_post_rho_j(int j,
+        double *rho_j,
+        double *rho,
+        double *X, 
+        int *Z, 
+        double *gamma0,
+        int n,
+        int p,
+        int J
+        ) {
     int i, k, l;
 
     // evaluate logpriori(cand_rho) 
@@ -213,7 +226,7 @@ double dm_log_post_rho_j(int j,
     return (log_pri + log_lik);
 }
 
-void dm_sample_rho(double *X, 
+void moaftme_sample_rho(double *X, 
                   int *Z,
                   double *rho, // note: input and output
                   double *gamma0,
@@ -245,7 +258,7 @@ void dm_sample_rho(double *X,
             cand_rho[k] = rnorm(rho[j + J*k], *tune);
         }
 
-        double log_post_cand_rho = dm_log_post_rho_j(j,
+        double log_post_cand_rho = moaftme_log_post_rho_j(j,
                                                      cand_rho,
                                                      rho,
                                                      X,
@@ -259,7 +272,7 @@ void dm_sample_rho(double *X,
             current_rho[k] = rho[j + J*k];
         }
 
-        double log_post_current_rho = dm_log_post_rho_j(j,
+        double log_post_current_rho = moaftme_log_post_rho_j(j,
                                                         current_rho,
                                                         rho,
                                                         X,
@@ -281,4 +294,24 @@ void dm_sample_rho(double *X,
         // else rho stays the same.
     }
 }
+
+// in fortran ordering, N dimensions d_0...d_(N-1), flat.ix = sum_{0,N-1} n_i prod_{0, i-1} d_j
+void foo(double *a, int *dim0, int *dim1, int *dim2) {
+    int i,j,k;
+    Rprintf("%d %d %d\n", *dim0, *dim1, *dim2);
+    for(i=0; i < (*dim0)*(*dim1)*(*dim2); ++i) {
+        double v = a[i];
+        Rprintf("%f ", v);
+    }
+    Rprintf("\n");
+    for (k=0; k < *dim2; ++k) {
+        for (j=0; j < *dim1; ++j) {
+            for (i=0; i < *dim0; ++i) {
+                double v = a[i + (*dim0)*j + (*dim0)*(*dim1)*k];
+                Rprintf("%f ", v);
+            }
+        }
+    }
+}
+
 

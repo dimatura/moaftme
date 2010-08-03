@@ -17,7 +17,7 @@ dyn.load('moaftmec.so')
 # rho - coefficients of logistic link, J x p
 
 moaftme.sampler <- function(t.l, t.u, right.censored, int.censored, X, J, M, 
-        n0, S0, b0, B0, tune) {
+        n0, S0, b0, B0, gamma0, tune) {
     n <- nrow(X)
     p <- ncol(X)
 
@@ -39,10 +39,6 @@ moaftme.sampler <- function(t.l, t.u, right.censored, int.censored, X, J, M,
     sigma.samples[1,] <- matrix(1, nrow=1, ncol=J)
 
     accepts <- rep(0, J)
-
-    alpha0 <- 1
-    lambda0 <- 1
-    gamma0 <- 10
 
     accepts.rho <- 0
     
@@ -91,7 +87,7 @@ sample.wz <- function(t.l, t.u, .beta, .rho, .sigma,
     Xrho <- tcrossprod(X, .rho)
     Xbeta <- tcrossprod(X, .beta)
 
-    out <- .C("dm_sample_wz",
+    out <- .C("moaftme_sample_wz",
               tl=as.double(t.l),
               tu=as.double(t.u),
               right_censored=as.integer(right.censored),
@@ -106,7 +102,6 @@ sample.wz <- function(t.l, t.u, .beta, .rho, .sigma,
               Z=as.integer(Z))
     w <- out$w
     Z <- out$Z
-
     list(w=w,Z=Z)
 }
 
@@ -146,7 +141,11 @@ sample.beta.sigma <- function(Y, X, Z, .beta, .sigma, n0, S0, b0, B0, invB0, J) 
             out.beta[j+1,] <- t(beta.t)
         } else {
             # too few points assigned to expert -- sample from prior
-            print('pri sample')
+            #Zsum <- c()
+            #for (k in 0:(J-1)) {
+            #    Zsum <- c(Zsum, sum(Z==k))
+            #}
+            #print(Zsum)
             #out.sigma[j+1] <- sqrt(1./rgamma(1., shape=n0*.5, rate=S0*.5))
             out.sigma[j+1] <- .sigma[j+1]
             # TODO fix t()
@@ -161,7 +160,7 @@ sample.rho <- function(X, Z, .rho, gamma0, tune, J) {
     #print(.rho)
     n <- nrow(X)
     p <- ncol(X)
-    out  <- .C("dm_sample_rho", 
+    out  <- .C("moaftme_sample_rho", 
               X=as.double(X),
               Z=as.integer(Z),
               rho=as.double(.rho),
@@ -174,9 +173,9 @@ sample.rho <- function(X, Z, .rho, gamma0, tune, J) {
     rho <- matrix(out$rho, nrow=J)
 
     ##PLOT
-    #exr <- exp(tcrossprod(X, .rho))
-    #exr <- exr/repmat(rowSums(exr), 1, ncol(exr))
-    #matplot(y=exr, type='l', ylim=c(0,1))
+    exr <- exp(tcrossprod(X, .rho))
+    exr <- exr/repmat(rowSums(exr), 1, ncol(exr))
+    matplot(y=exr, type='l', ylim=c(0,1))
 
     list(rho=rho, accept=out$accept)
 }
@@ -227,6 +226,7 @@ sim.data <- function(plot=FALSE) {
         } else if (r < 2/3) {
             # right
             t.l[i] <- ifelse(t.l[i]-0.1 < 0, 0, t.l[i] - 0.1)
+            t.u[i] <- -1
             right.censored[i] <- 1
         }
         # else no censorship
@@ -241,84 +241,4 @@ sim.data <- function(plot=FALSE) {
             X=X)
 }
 
-test.sampler.1 <- function() {
-    n0 <- 0.01
-    S0 <- 0.01
-    b0 <- matrix(0, nrow=1, ncol=2)
-    B0 <- diag(0.01, 2)
-    tune <- 0.10
-    M <- 10000
-    J <- 2
-
-    sim <- sim.data()
-    X <- cbind(rep(1,nrow(sim$X)), sim$X)
-
-    rc <- sim$right.censored
-    ic <- sim$int.censored
-
-    out <- moaftme.sampler(sim$t.l, sim$t.u, rc, ic, X, J, M, 
-        n0=n0, S0=S0, b0=b0, B0=B0, tune)
-    out
-}
-
-test.sampler.2 <- function() {
-    n0 <- 0.01
-    S0 <- 0.01
-    b0 <- matrix(0, nrow=1, ncol=2)
-    B0 <- diag(0.01, 2)
-    tune <- 4.5
-    M <- 100000
-    J <- 2
-
-    d <- read.table('flourbeetle.txt', header=TRUE)
-
-    X <- model.matrix(~ X1, d)
-
-    rc <- d$rc
-    ic <- d$ic
-    t.l <- matrix(d$t.l,ncol=1)
-    t.u <- matrix(d$t.u,ncol=1)
-
-    out <- moaftme.sampler(t.l, t.u, rc, ic, X, J, M, 
-        n0=n0, S0=S0, b0=b0, B0=B0, tune)
-    out
-}
-
-if (FALSE) {
-    ts.plot(out$beta[,1,1])
-    plot(density(out$beta[,1,1]))
-    ts.plot(out$beta[,1,2])
-    plot(density(out$beta[,1,2]))
-    ts.plot(out$beta[,2,1])
-    plot(density(out$beta[,2,1]))
-    ts.plot(out$beta[,2,2])
-    plot(density(out$beta[,2,2]))
-    ts.plot(out$sigma[,1])
-    ts.plot(out$sigma[,2])
-    plot(density(out$sigma[,1]))
-    ts.plot(out$rho[,2,1])
-    ts.plot(out$rho[,2,2])
-    ts.plot(out$rho[,3,1])
-    matplot(cbind(out$beta[,1,1], 10*out$sigma[,1]), type='l')
-    matplot(out$beta[,1,1:2], type='l')
-    matplot(out$rho[,1,1:2], type='l')
-    matplot(out$rho[,2,1:2], type='l')
-    matplot(out$rho[,3,1:2], type='l')
-    acf(out$beta[,1,1:2])
-    acf(out$beta[,2,1:2])
-    acf(out$rho[,2,1])
-    acf(out$sigma[,1:2])
-    
-    ts.plot(out$sigma[100:1000,2])
-    ts.plot(out$beta[100:1000,1,1:2])
-    ts.plot(out$beta[100:1000,2,1:2])
-    ts.plot(out$rho[100:1000,2,1])
-    mean(out$rho[100:1000,2,2])
-
-}
-
-#sim.data(TRUE)
-#package.skeleton(name="moaftme", namespace=TRUE)
-out <- test.sampler.1()
-#out <- test.sampler.2()
 
