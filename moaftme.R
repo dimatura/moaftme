@@ -39,8 +39,6 @@ moaftme.sampler <- function(t.l, t.u, right.censored, int.censored, X, J, M,
     sigma.samples[1,] <- matrix(1, nrow=1, ncol=J)
 
     accepts <- rep(0, J)
-
-    accepts.rho <- 0
     
     # main loop
     for (m in 2:M) {
@@ -67,17 +65,16 @@ moaftme.sampler <- function(t.l, t.u, right.censored, int.censored, X, J, M,
         out.rho <- sample.rho(X, Z, rho.samples[m-1,,], gamma0, tune, J)
         rho.samples[m,,] <- out.rho$rho
 
-        accepts.rho <- accepts.rho + out.rho$accept
+        accepts <- accepts + out.rho$accepts
         #print(sprintf("m: %d, accepts: %d", m, accepts.rho))
     }
 
-    # take into account that for each iteration we sample rho J-1 times
-    accepts.rho <- (accepts.rho*100)/((J-1)*(M-1))
+    accepts <- (accepts/(M-1))
 
     list(sigma.samples=sigma.samples,
          beta.samples=beta.samples,
          rho.samples=rho.samples,
-         accepts.rho=accepts.rho)
+         accepts=accepts)
 
 }
 
@@ -146,8 +143,8 @@ sample.beta.sigma <- function(Y, X, Z, .beta, .sigma, n0, S0, b0, B0, invB0, J) 
             #    Zsum <- c(Zsum, sum(Z==k))
             #}
             #print(Zsum)
-            #out.sigma[j+1] <- sqrt(1./rgamma(1., shape=n0*.5, rate=S0*.5))
-            out.sigma[j+1] <- .sigma[j+1]
+            out.sigma[j+1] <- sqrt(1./rgamma(1, shape=n0*.5, rate=S0*.5))
+            # out.sigma[j+1] <- .sigma[j+1]
             # TODO fix t()
             #out.beta[j+1,] <- t(.beta[j+1,])
             out.beta[j+1,] <- rmvnorm(1, b0, invB0)
@@ -169,15 +166,15 @@ sample.rho <- function(X, Z, .rho, gamma0, tune, J) {
               nptr=as.integer(nrow(X)),
               pptr=as.integer(ncol(X)),
               Jptr=as.integer(J),
-              accept=integer(1))
+              accepts=integer(J))
     rho <- matrix(out$rho, nrow=J)
 
     ##PLOT
-    exr <- exp(tcrossprod(X, .rho))
-    exr <- exr/repmat(rowSums(exr), 1, ncol(exr))
-    matplot(y=exr, type='l', ylim=c(0,1))
+    #exr <- exp(tcrossprod(X, .rho))
+    #exr <- exr/repmat(rowSums(exr), 1, ncol(exr))
+    #matplot(y=exr, type='l', ylim=c(0,1))
 
-    list(rho=rho, accept=out$accept)
+    list(rho=rho, accepts=out$accept)
 }
 
 indicator.to.index <- function(ind) {

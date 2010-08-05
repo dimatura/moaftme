@@ -1,14 +1,21 @@
 
 source('moaftme.R')
 
+# from pointy to flat
+# note n0 = rate*2, S0 = shape*2
+# plot(1/rgamma(80000, rate=3,shape=2 ), type='l') 
+# plot(1/rgamma(80000, rate=3,shape=1 ), type='l')
+# plot(1/rgamma(80000, rate=2,shape=1 ), type='l')
+# plot(1/rgamma(80000, rate=1,shape=1 ), type='l')
+
 test.sampler.1 <- function() {
-    n0 <- 0.01
-    S0 <- 0.01
+    n0 <- 4
+    S0 <- 2
     b0 <- matrix(0, nrow=1, ncol=2)
     B0 <- diag(0.01, 2)
-    tune <- 0.50
+    tune <- c(0, 0.50)
     M <- 1000
-    J <- 3
+    J <- 2
     gamma0 <- 10
 
     sim <- sim.data()
@@ -23,14 +30,14 @@ test.sampler.1 <- function() {
 }
 
 test.sampler.2 <- function() {
-    n0 <- 0.01
-    S0 <- 0.01
+    n0 <- 4
+    S0 <- 2
     b0 <- matrix(0, nrow=1, ncol=2)
     B0 <- diag(0.1, 2)
-    tune <- 8
-    M <- 10000
+    tune <- c(0, 6)
+    M <- 80000
     J <- 2
-    gamma0 <- 30
+    gamma0 <- c(30) 
 
     d <- read.table('flourbeetle.txt', header=TRUE)
 
@@ -78,8 +85,6 @@ if (FALSE) {
     mean(out$rho[100:1000,2,2])
 
 }
-
-
 #sim.data(TRUE)
 #package.skeleton(name="moaftme", namespace=TRUE)
 #out <- test.sampler.1()

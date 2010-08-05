@@ -234,7 +234,7 @@ void moaftme_sample_rho(double *X,
                   int *nptr, 
                   int *pptr,
                   int *Jptr,
-                  int *accept 
+                  int *accepts
                   ) {
     int n = *nptr;
     int p = *pptr;
@@ -255,7 +255,7 @@ void moaftme_sample_rho(double *X,
     for (j=1; j < J; ++j) {
         // generate candidate rho_j
         for (k=0; k < p; ++k) {
-            cand_rho[k] = rnorm(rho[j + J*k], *tune);
+            cand_rho[k] = rnorm(rho[j + J*k], tune[j]);
         }
 
         double log_post_cand_rho = moaftme_log_post_rho_j(j,
@@ -289,7 +289,7 @@ void moaftme_sample_rho(double *X,
             for (k=0; k < p; ++k) {
                 rho[j + J*k] = cand_rho[k];
             }
-            *accept = *accept + 1;
+            accepts[j] += 1;
         }
         // else rho stays the same.
     }
